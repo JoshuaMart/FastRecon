@@ -1,4 +1,4 @@
-# FastRecon
+# ⚡FastRecon
 
 FastRecon is a simple, non-exhaustive and not the most complete, but fast solution for obtaining a list of sub-domains.
 
