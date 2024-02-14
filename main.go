@@ -32,7 +32,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	command := fmt.Sprintf(`subfinder -pc subfinder.yaml -silent -d %s |
 	                        puredns resolve -q --resolvers resolvers.txt --resolvers-trusted resolvers-trusted.txt |
 	                        httpx -silent -sc -cl -ct -title -td -ip -cname -cdn -irh -j -o httpx.json
-		                   `, domain)
+                           `, domain)
 
 	err := exec.Command("sh", "-c", command).Run()
 	if err != nil {
