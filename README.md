@@ -1,16 +1,11 @@
 # ⚡FastRecon
 
-FastRecon is a simple, non-exhaustive and not the most complete, but fast solution for obtaining a list of sub-domains.
+FastRecon is a fast and simple tool for discovering subdomains of a target domain. It is designed to be non-exhaustive and is not intended to be the most complete solution, but it is ideal for quickly identifying subdomains.
 
-The project is initially intended to run on a Serverless service via one of the following methods :
-  - Serverless Function with Go Runtime
-  - Serverless Function with Ruby runtime
-  - Containers Serverless
-
-The following tools is used and are required for use outside Docker :
-  - [Subfinder](https://github.com/projectdiscovery/subfinder)
-  - [PureDNS](https://github.com/d3mondev/puredns) & [MassDNS](https://github.com/blechschmidt/massdns)
-  - [HTTPX](https://github.com/projectdiscovery/httpx)
+  * Fast and efficient subdomain discovery
+  * Compatible with serverless functions using Go or Ruby runtimes
+  * Uses popular open source tools such as [Subfinder](https://github.com/projectdiscovery/subfinder), [PureDNS](https://github.com/d3mondev/puredns), [MassDNS](https://github.com/blechschmidt/massdns) & [HTTPX](https://github.com/projectdiscovery/httpx)
+  * Returns results in JSON format for easy integration with other tools
 
 When used in a serverless function, the binaries must also be joined with the Go or Ruby code.
 
@@ -27,7 +22,9 @@ docker build . -t fastrecon
 docker run -p 8080:8080 fastrecon
 ```
 
-Make an HTTP request to `/[domain]`. The result is returned in the form of a JSON.
+![Docker image](https://zupimages.net/up/24/07/evjx.png)
+
+To use FastRecon, make an HTTP request to `/[domain]`. The result is returned in the form of a JSON array containing information about each subdomain, including its URL, status code, content length, content type, title, IP address, CNAME, CDN status, technology used, and HTTP headers.
 
 ```
 jomar@SRV:~$ curl http://192.168.1.19:8080/domain.tld
@@ -76,3 +73,8 @@ If, for whatever reason, you'd prefer to use Ruby Docker, that's also possible w
   CMD ruby server.rb
   ```
 </details>
+
+Example of resources consumption in a Serverless Container with 560mVCPU & 512MB RAM :
+  * 220 seconds with a cold start for a recon on a domain with about 500 subdomains
+
+![Resources Consumption](https://zupimages.net/up/24/07/7lsp.png)
