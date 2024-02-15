@@ -12,6 +12,10 @@ When used in a serverless function, the binaries must also be joined with the Go
 > [!IMPORTANT]  
 > When Fastrecon is run in a Serverless function, the tool is not designed to be run on targets containing a large number of sub-domains (such as Google or Apple).
 
+The Docker image produced is very light despite the many embedded binaries, making it perfect for Serverless use.
+
+![Docker image](https://zupimages.net/up/24/07/evjx.png)
+
 ## Build, launch the container (Go version)
 
 > [!NOTE]  
@@ -21,8 +25,6 @@ When used in a serverless function, the binaries must also be joined with the Go
 docker build . -t fastrecon
 docker run -p 8080:8080 fastrecon
 ```
-
-![Docker image](https://zupimages.net/up/24/07/evjx.png)
 
 To use FastRecon, make an HTTP request to `/[domain]`. The result is returned in the form of a JSON array containing information about each subdomain, including its URL, status code, content length, content type, title, IP address, CNAME, CDN status, technology used, and HTTP headers.
 
