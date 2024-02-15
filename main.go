@@ -3,8 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"bytes"
 	"net/http"
+	"bufio"
 	"strings"
 	"os/exec"
 )
@@ -29,32 +30,31 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Run the command and capture the output
+	var output bytes.Buffer
 	command := fmt.Sprintf(`subfinder -pc subfinder.yaml -silent -d %s |
 	                        puredns resolve -q --resolvers resolvers.txt --resolvers-trusted resolvers-trusted.txt |
-	                        httpx -silent -sc -cl -ct -title -td -ip -cname -cdn -irh -j -o httpx.json
+	                        httpx -silent -sc -cl -ct -title -td -ip -cname -cdn -irh -j
                            `, domain)
 
-	err := exec.Command("sh", "-c", command).Run()
+	exec := exec.Command("sh", "-c", command)
+	exec.Stdout = &output
+	err := exec.Run()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	data, err := ioutil.ReadFile("httpx.json")
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "Httpx Error: %v\n", err)
-		return
-	}
+	// Read the output line by line
+	scanner := bufio.NewScanner(strings.NewReader(output.String()))
 
 	// Parse the JSON Lines output
 	var jsonArray []HttpxResponse
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		if len(line) == 0 {
-			continue
-		}
+
+	for scanner.Scan() {
+		line := scanner.Text()
 		var httpxResponse HttpxResponse
+
 		err := json.Unmarshal([]byte(line), &httpxResponse)
 		if err != nil {
 			fmt.Fprintf(w, "Error parsing JSON Lines output: %v", err)
