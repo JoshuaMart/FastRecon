@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:alpine3.19 as builder
+FROM golang:alpine3.21 as builder
 
 RUN apk add make gcc g++ zlib zlib-dev git wget
 
@@ -19,7 +19,7 @@ RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
 RUN go install github.com/d3mondev/puredns/v2@latest
 
 # Run stage
-FROM alpine:3.19
+FROM alpine:latest
 
 # Create app directory
 WORKDIR /app
