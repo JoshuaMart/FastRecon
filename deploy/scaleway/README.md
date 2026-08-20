@@ -139,9 +139,18 @@ scw jobs definition update "$DEFINITION_ID" \
 it was sent. Keep it at `-` to retain a copy in the logs — and if you do, set
 `FASTRECON_FORMAT=json-compact`. The default indented format turns one report
 into hundreds of log lines: a 75-host run produced **1889**, which a collector
-may reorder or drop. One line carries the same document intact, and `jsonl` is
-not the answer here because it emits only hosts, dropping the per-source
-accounting, the counters and the warnings.
+may reorder or drop.
+
+`json-compact` cuts that to one line, but **Cockpit splits log lines at 16384
+bytes**. Measured: an 18488-byte report arrived as 16384 + 2104. The split is
+clean and the pieces concatenate back into valid JSON, but it is one more thing
+a consumer has to know. Under roughly 16 KiB — a scope of a few dozen hosts —
+one line arrives whole; past that, reassembly is back on the table.
+
+So the logs remain a place to *read* a run, not a transport. Anything a machine
+consumes should go to the webhook. `jsonl` is not the middle ground it looks
+like: it emits only hosts, dropping the per-source accounting, the counters and
+the warnings.
 
 Stopping a job sends SIGTERM. FastRecon cancels the run, marks the report
 incomplete — without claiming a timeout, since somebody stopped it on purpose —
