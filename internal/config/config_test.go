@@ -86,6 +86,47 @@ func TestEnvListSplitting(t *testing.T) {
 	}
 }
 
+// A regexp repeat count contains a comma. Splitting on it yields two halves
+// that both still compile, so the run would quietly scan hosts the operator
+// excluded — the worst possible failure for an exclusion.
+func TestRegexExclusionsSurviveEnvSplitting(t *testing.T) {
+	t.Setenv("FASTRECON_EXCLUDE", `re:^a{1,3}\.example\.com$`+"\nadmin.example.com, www.example.com")
+	cfg := mustLoad(t, "-d", "example.com")
+
+	want := []string{`re:^a{1,3}\.example\.com$`, "admin.example.com", "www.example.com"}
+	if len(cfg.Exclude) != len(want) {
+		t.Fatalf("exclude = %#v, want %#v", cfg.Exclude, want)
+	}
+	for i := range want {
+		if cfg.Exclude[i] != want[i] {
+			t.Errorf("exclude[%d] = %q, want %q", i, cfg.Exclude[i], want[i])
+		}
+	}
+}
+
+// The engine matches source names case-sensitively and calls os.Exit on an
+// empty selection, so names are normalized before they can get there.
+func TestSourceNamesAreNormalized(t *testing.T) {
+	cfg := mustLoad(t, "-d", "example.com", "--sources", "Crt", "--sources", " SUBMD ", "--exclude-sources", "Chaos")
+	if len(cfg.Sources) != 2 || cfg.Sources[0] != "crt" || cfg.Sources[1] != "submd" {
+		t.Errorf("sources = %v, want them lowercased and trimmed", cfg.Sources)
+	}
+	if len(cfg.ExcludeSources) != 1 || cfg.ExcludeSources[0] != "chaos" {
+		t.Errorf("exclude-sources = %v, want them lowercased", cfg.ExcludeSources)
+	}
+}
+
+// The engine takes whole seconds and truncates, so anything under a second
+// would silently become no ceiling at all.
+func TestSubSecondSourceTimeoutRejected(t *testing.T) {
+	if _, err := load(t, "-d", "example.com", "--source-timeout", "500ms"); err == nil {
+		t.Error("a sub-second source timeout was accepted")
+	}
+	if _, err := load(t, "-d", "example.com", "--source-timeout", "1s"); err != nil {
+		t.Errorf("a one-second source timeout was rejected: %v", err)
+	}
+}
+
 // Header values may legitimately contain a comma, so they split on newlines
 // only — otherwise "Accept: a,b" would silently become two broken headers.
 func TestHeaderEnvSplitsOnNewlinesOnly(t *testing.T) {

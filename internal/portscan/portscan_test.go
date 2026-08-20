@@ -5,12 +5,15 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
 	"github.com/JoshuaMart/FastRecon/internal/report"
 )
 
@@ -130,9 +133,10 @@ func TestCDNEntriesGroupPerProvider(t *testing.T) {
 func newScanner(t *testing.T, skipCDN bool, scan func(context.Context, []string, portSpec) (map[string][]int, error)) *Scanner {
 	t.Helper()
 	return &Scanner{
-		opts:  Options{SkipCDN: skipCDN, Mode: ModeConnect, Logger: discardLogger()},
-		ports: portSpec{TopPorts: "100"},
-		scan:  scan,
+		opts:    Options{SkipCDN: skipCDN, Mode: ModeConnect, Logger: discardLogger()},
+		ports:   portSpec{TopPorts: "100"},
+		scan:    scan,
+		limiter: ratelimit.New(0),
 	}
 }
 
@@ -250,7 +254,7 @@ func TestSynModeIsRefusedNotSilentlyDowngraded(t *testing.T) {
 }
 
 func TestExpandPorts(t *testing.T) {
-	s := &Scanner{opts: Options{Logger: discardLogger()}}
+	s := &Scanner{opts: Options{Logger: discardLogger()}, limiter: ratelimit.New(0)}
 
 	got, err := s.expand(portSpec{List: "443,80,80,8000-8002"})
 	if err != nil {
@@ -278,7 +282,7 @@ func TestExpandPorts(t *testing.T) {
 }
 
 func TestExpandPortsAppliesExclusions(t *testing.T) {
-	s := &Scanner{opts: Options{ExcludePorts: "443,8001", Logger: discardLogger()}}
+	s := &Scanner{opts: Options{ExcludePorts: "443,8001", Logger: discardLogger()}, limiter: ratelimit.New(0)}
 	got, err := s.expand(portSpec{List: "80,443,8000-8002"})
 	if err != nil {
 		t.Fatal(err)
@@ -288,16 +292,40 @@ func TestExpandPortsAppliesExclusions(t *testing.T) {
 	}
 }
 
-func TestPlanIsPortMajor(t *testing.T) {
+func TestFeedIsPortMajor(t *testing.T) {
 	// Address-major order would hammer one host with the whole port list
 	// back to back.
-	got := plan([]string{"1.1.1.1", "2.2.2.2"}, []int{80, 443})
+	queue := make(chan target)
+	go feed(context.Background(), queue, []string{"1.1.1.1", "2.2.2.2"}, []int{80, 443})
+
+	var got []target
+	for t := range queue {
+		got = append(got, t)
+	}
 	want := []target{
 		{"1.1.1.1", 80}, {"2.2.2.2", 80},
 		{"1.1.1.1", 443}, {"2.2.2.2", 443},
 	}
 	if !slices.Equal(got, want) {
-		t.Errorf("plan = %v, want %v", got, want)
+		t.Errorf("feed = %v, want %v", got, want)
+	}
+}
+
+// The feeder must not block forever once the run is over.
+func TestFeedStopsWithTheContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	queue := make(chan target)
+	done := make(chan struct{})
+	go func() { feed(ctx, queue, []string{"1.1.1.1"}, []int{80, 443, 8080}); close(done) }()
+
+	for range queue {
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("feed did not return after its context ended")
 	}
 }
 
@@ -331,7 +359,7 @@ func TestConnectScanFindsAListeningPortAndNotAClosedOne(t *testing.T) {
 		Rate:        1000,
 		Timeout:     2 * time.Second,
 		Logger:      discardLogger(),
-	}}
+	}, limiter: ratelimit.New(1000)}
 
 	found, err := s.scanConnect(context.Background(), []string{"127.0.0.1"},
 		portSpec{List: strconv.Itoa(openPort) + "," + strconv.Itoa(closedPort)})
@@ -364,5 +392,56 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 	}
 	if _, err := New(base); err != nil {
 		t.Errorf("New rejected valid options: %v", err)
+	}
+}
+
+// The worker count is what --scan-concurrency promises. A goroutine per probe
+// would allocate a stack for every (address, port) pair up front: a full
+// sweep is millions of them, and the process is killed for memory long before
+// the deadline it was budgeted for.
+func TestScanConnectGoroutinesStayBounded(t *testing.T) {
+	const (
+		workers = 8
+		ports   = 20000
+	)
+	s := &Scanner{
+		opts: Options{
+			Concurrency: workers,
+			Rate:        1_000_000,
+			Timeout:     200 * time.Millisecond,
+			Logger:      discardLogger(),
+		},
+		limiter: ratelimit.New(0),
+	}
+
+	baseline := runtime.NumGoroutine()
+	var peak atomic.Int64
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				if n := int64(runtime.NumGoroutine()); n > peak.Load() {
+					peak.Store(n)
+				}
+				runtime.Gosched()
+			}
+		}
+	}()
+
+	// Loopback high ports refuse instantly, so this measures scheduling, not
+	// network waits.
+	if _, err := s.scanConnect(context.Background(), []string{"127.0.0.1"}, portSpec{List: "20000-" + strconv.Itoa(20000+ports-1)}); err != nil {
+		t.Fatal(err)
+	}
+	close(stop)
+
+	// Workers, the feeder, the sampler, and the test's own goroutines — far
+	// below one per probe.
+	if limit := int64(baseline + workers + 50); peak.Load() > limit {
+		t.Errorf("peak goroutines = %d, want at most %d for %d probes at concurrency %d",
+			peak.Load(), limit, ports, workers)
 	}
 }

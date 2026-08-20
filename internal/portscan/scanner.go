@@ -20,6 +20,7 @@ import (
 	"github.com/projectdiscovery/cdncheck"
 
 	"github.com/JoshuaMart/FastRecon/internal/pipeline"
+	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
 	"github.com/JoshuaMart/FastRecon/internal/report"
 )
 
@@ -49,6 +50,9 @@ type Scanner struct {
 	opts  Options
 	ports portSpec
 	cdn   *cdncheck.Client
+	// limiter is shared by both scan passes. One per pass would hand the full
+	// configured rate to each, so --scan-rate would not describe the run.
+	limiter *ratelimit.Limiter
 	// scan is the single point where sockets are opened. It is a field so the
 	// planning, batching and result-mapping logic can be tested without
 	// touching the network.
@@ -87,7 +91,7 @@ func New(opts Options) (*Scanner, error) {
 		return nil, fmt.Errorf("portscan: unknown scan mode %q", opts.Mode)
 	}
 
-	s := &Scanner{opts: opts, ports: ports, cdn: cdncheck.New()}
+	s := &Scanner{opts: opts, ports: ports, cdn: cdncheck.New(), limiter: ratelimit.New(opts.Rate)}
 	s.scan = s.scanConnect
 	return s, nil
 }
@@ -102,6 +106,7 @@ func (s *Scanner) Name() string { return "connect" }
 // budget proving something already known.
 func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortScan, error) {
 	out := pipeline.PortScan{Hosts: hosts}
+	defer s.limiter.Stop()
 
 	// Several subdomains commonly resolve to one address; scanning it once
 	// and mapping the result back is the difference between one scan and

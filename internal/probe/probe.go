@@ -18,11 +18,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/projectdiscovery/httpx/common/httpx"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 
 	"github.com/JoshuaMart/FastRecon/internal/pipeline"
+	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
 	"github.com/JoshuaMart/FastRecon/internal/report"
 	"github.com/JoshuaMart/FastRecon/internal/version"
 )
@@ -32,7 +34,10 @@ const maxTitleLength = 300
 
 // Options configures the prober.
 type Options struct {
-	Concurrency     int
+	Concurrency int
+	// Rate caps probes per second. An HTTP request costs a target far more
+	// than a TCP handshake, so the probe sweep is rate-limited like the scan.
+	Rate            int
 	Timeout         time.Duration
 	Retries         int
 	FollowRedirects bool
@@ -49,8 +54,9 @@ type HTTPX struct {
 	// direct never follows redirects. It is the fallback for a service whose
 	// redirect target is unreachable: following the chain would fail the
 	// whole request and lose a response that is itself a finding.
-	direct *httpx.HTTPX
-	tech   *wappalyzer.Wappalyze
+	direct  *httpx.HTTPX
+	tech    *wappalyzer.Wappalyze
+	limiter *ratelimit.Limiter
 	// probe is the single point where requests happen, so the scheme
 	// selection and result mapping can be tested without a network.
 	probe func(ctx context.Context, host string, port int) *report.HTTP
@@ -109,7 +115,7 @@ func New(opts Options) (*HTTPX, error) {
 		return nil, fmt.Errorf("probe: technology fingerprints: %w", err)
 	}
 
-	h := &HTTPX{opts: opts, client: client, direct: direct, tech: tech}
+	h := &HTTPX{opts: opts, client: client, direct: direct, tech: tech, limiter: ratelimit.New(opts.Rate)}
 	h.probe = h.probeOne
 	return h, nil
 }
@@ -131,38 +137,47 @@ func (h *HTTPX) Probe(ctx context.Context, hosts []report.Host) (pipeline.Probe,
 		return out, nil
 	}
 
-	h.opts.Logger.Debug("http probe started", "targets", len(targets), "concurrency", h.opts.Concurrency)
+	h.opts.Logger.Debug("http probe started", "targets", len(targets), "concurrency", h.opts.Concurrency, "rate", h.opts.Rate)
+	defer h.limiter.Stop()
 
 	results := make([]*report.HTTP, len(targets))
 	var (
 		wg        sync.WaitGroup
-		sem       = make(chan struct{}, h.opts.Concurrency)
 		mu        sync.Mutex
 		unchecked int
 	)
-
-	for i, t := range targets {
-		wg.Add(1)
-		go func(i int, t target) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				mu.Lock()
-				unchecked++
-				mu.Unlock()
-				return
-			}
-			if ctx.Err() != nil {
-				mu.Lock()
-				unchecked++
-				mu.Unlock()
-				return
-			}
-			results[i] = h.probe(ctx, t.host, t.port)
-		}(i, t)
+	skip := func() {
+		mu.Lock()
+		unchecked++
+		mu.Unlock()
 	}
+
+	// A fixed pool over a stream of indexes, rather than a goroutine per
+	// target: the worker count is what --probe-concurrency promises, and
+	// nothing is allocated for work that may never start.
+	queue := make(chan int)
+	for range h.opts.Concurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range queue {
+				if ctx.Err() != nil || !h.limiter.Wait(ctx) {
+					skip()
+					continue
+				}
+				results[i] = h.probe(ctx, targets[i].host, targets[i].port)
+			}
+		}()
+	}
+
+	for i := range targets {
+		select {
+		case queue <- i:
+		case <-ctx.Done():
+			skip()
+		}
+	}
+	close(queue)
 	wg.Wait()
 
 	out.Hosts = attach(hosts, targets, results)
@@ -359,6 +374,12 @@ func truncate(s string, limit int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= limit {
 		return s
+	}
+	// Cutting at a byte offset can land inside a multi-byte rune, and the
+	// JSON encoder then rewrites the broken tail to U+FFFD. Non-ASCII titles
+	// are routine on real targets.
+	for limit > 0 && !utf8.ValidString(s[:limit]) {
+		limit--
 	}
 	return s[:limit] + "…"
 }

@@ -32,6 +32,10 @@ func NewRedactor(creds map[string]Credential) *Redactor {
 }
 
 // Redact returns s with every known credential replaced.
+//
+// The query-string pass runs whether or not any credential value is known: a
+// run whose provider config failed to load has no values to match, and is
+// exactly the run whose source errors are most likely to quote a URL.
 func (r *Redactor) Redact(s string) string {
 	if s == "" {
 		return s
@@ -47,7 +51,7 @@ func (r *Redactor) Redact(s string) string {
 // meant to be redacted at the point it is created, and this catches whatever
 // was not.
 func (r *Redactor) RedactBytes(data []byte) []byte {
-	if len(r.values) == 0 || len(data) == 0 {
+	if len(data) == 0 {
 		return data
 	}
 	out := r.Redact(string(data))

@@ -236,6 +236,9 @@ than silently ignored, because a misspelled source is a source that never ran.
 
 ### 6.3 Behaviour
 
+- Source names are normalized to lower case before they reach the engine, whose lookup is
+  case-sensitive and which calls `os.Exit` on an empty selection. An unknown name is still
+  rejected outright.
 - Sources run concurrently, each with its own timeout and its own error handling.
 - **A failing source is a warning, not a fatal error** — a missing API key, a rate limit, or
   a 5xx degrades the run instead of aborting it. Every source's status
@@ -295,7 +298,14 @@ Sources of exclusions, merged together:
 
 - `--exclude <pattern>` (repeatable)
 - `--exclude-file <path>` (one pattern per line, `#` comments allowed)
-- `FASTRECON_EXCLUDE` (comma- or newline-separated) — the serverless path
+- `FASTRECON_EXCLUDE` — the serverless path
+
+The environment form splits on **lines** first. A line beginning with `re:` is one pattern,
+kept whole; any other line is a comma-separated list of hosts and wildcards. Regexps have to
+be exempt from comma splitting because a repeat count contains one — and cutting
+`re:^a{1,3}\.example\.com$` yields two halves that **both still compile**, so the run would
+quietly resolve, scan and probe hosts the operator had excluded. Splitting the compact host
+form on commas is what keeps it usable in a job's environment variable.
 
 ## 8. Stage 3 — Live/dead separation
 
@@ -431,7 +441,14 @@ is executed.
   - `--exclude-ports` to subtract.
   A malformed expression is rejected at startup with the offending part named, rather than
   inside the engine.
-- Tunables: concurrency, rate limit, connect timeout, retries.
+- Tunables: concurrency, rate limit, connect timeout, retries. Both limits are global to the
+  run and shared by the two scan passes — one limiter per pass would hand the full configured
+  rate to each, so `--scan-rate` would not describe the run.
+- Probes are executed by a **fixed pool of `--scan-concurrency` workers** reading a stream of
+  targets. One goroutine per probe would allocate a stack for every address-port pair up
+  front: a full sweep of ten addresses measured 5.7 GB peak resident, against 65 MB for the
+  pool. In a memory-capped job that is an OOM kill before any report is delivered — worse
+  than the truncated report the budget design exists to guarantee.
 - **Only live hosts are scanned.** A dead host has no address to connect to, and a wildcard
   artifact is not a host — scanning either spends the budget proving something already known.
 - Scanning targets resolved addresses, deduplicated: several subdomains pointing at the same
@@ -482,8 +499,10 @@ for origin addresses, ports 80 and 443 for the edges.
 - Collected per service: probed URL, scheme, status code, page title, content length,
   redirect chain, final URL, response time, server header, detected technologies, and — for
   TLS connections — subject CN, issuer, expiry and SANs.
-- Tunables: concurrency, request timeout, retries, follow-redirects toggle and hop limit,
-  custom User-Agent and headers.
+- Tunables: concurrency, **rate limit**, request timeout, retries, follow-redirects toggle and
+  hop limit, custom User-Agent and headers. The sweep is rate-limited like the port scan: an
+  HTTP request costs a target far more than a TCP handshake, so if a ceiling belongs anywhere
+  it belongs here. Probes run on a fixed worker pool, for the same reason as the scan.
 - **Redirects are not followed by default.** The `Location` target is recorded in `final_url`
   either way, so following them buys the final page's title and status at the cost of a
   request per hop to a host that may be out of scope entirely. `--probe-follow-redirects`
@@ -551,7 +570,8 @@ Optional YAML, selected by `--config` / `FASTRECON_CONFIG`. Never read from an i
 | `--sources` | `FASTRECON_SOURCES` | the five above | enumeration sources to query |
 | `--exclude-sources` | `FASTRECON_EXCLUDE_SOURCES` | — | sources to subtract from the selection |
 | `--all-sources` | `FASTRECON_ALL_SOURCES` | `false` | query every source the engine knows |
-| `--source-timeout` | `FASTRECON_SOURCE_TIMEOUT` | `30s` | time ceiling for a single source |
+| `--source-timeout` | `FASTRECON_SOURCE_TIMEOUT` | `30s` | time ceiling for a single source (whole seconds) |
+| `--probe-rate` | `FASTRECON_PROBE_RATE` | `200` | HTTP probes per second |
 | `--resolvers` | `FASTRECON_RESOLVERS` | bundled set | DNS resolver IPs to use |
 | `--resolvers-file` | `FASTRECON_RESOLVERS_FILE` | — | file of resolver IPs |
 | `--resolvers-url` | `FASTRECON_RESOLVERS_URL` | — | https URL of a resolver list |
@@ -715,9 +735,11 @@ right and must appear in the report, not merely be counted in `stats`.
 | 1 | invalid configuration / usage |
 | 2 | report emitted, but the run did not finish its scope — the deadline was reached, or a stage failed or is unavailable |
 | 3 | run produced a report, but a sink failed (e.g. webhook delivery) |
-| 4 | fatal runtime error, no report produced |
+| 4 | fatal error, no report produced — including a transient preparation failure such as an unreachable resolver list, or a health check that left no usable resolver |
 
-Distinct codes matter because a job scheduler's only signal is the exit status.
+Distinct codes matter because a job scheduler's only signal is the exit status, and it keys
+its retry on them. A network blip reported as `1` — invalid configuration — is something no
+scheduler will ever retry.
 
 ## 14. Logging and observability
 

@@ -10,9 +10,18 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/stage"
 )
 
-// headerFlags hold values that may legitimately contain a comma, so their
-// environment form is split on newlines only.
-var headerFlags = map[string]bool{"probe-header": true, "webhook-header": true}
+// newlineOnlyFlags hold values that may legitimately contain a comma, so
+// their environment form is split on newlines only.
+var newlineOnlyFlags = map[string]bool{
+	"probe-header":   true,
+	"webhook-header": true,
+}
+
+// patternFlags hold exclusion patterns, which need a rule of their own: a
+// regexp's repeat count contains a comma, and splitting on it yields two
+// halves that both still compile — so the run would quietly scan hosts the
+// operator excluded. See splitPatterns.
+var patternFlags = map[string]bool{"exclude": true}
 
 // RegisterFlags defines the full option surface. Defaults live here and
 // nowhere else, so `--help` is the reference for what a run does by default.
@@ -31,7 +40,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.StringArray("sources", RequiredSources, "enumeration sources to query (repeatable); see `fastrecon sources`")
 	fs.StringArray("exclude-sources", nil, "sources to remove from the selection (repeatable)")
 	fs.Bool("all-sources", false, "query every source the engine knows, not just the selection")
-	fs.Duration("source-timeout", 30*time.Second, "time ceiling for a single source, retries and backoff included")
+	fs.Duration("source-timeout", 30*time.Second, "time ceiling for a single source, retries and backoff included; whole seconds only")
 
 	fs.StringArray("resolvers", nil, "DNS resolver IP to use (repeatable); empty uses the bundled set")
 	fs.String("resolvers-file", "", "file of resolver IPs, one per line, # for comments")
@@ -53,6 +62,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.Int("scan-retries", 2, "retries per port")
 
 	fs.Int("probe-concurrency", 50, "concurrent HTTP probes")
+	fs.Int("probe-rate", 200, "HTTP probes per second")
 	fs.Duration("probe-timeout", 10*time.Second, "timeout per HTTP probe")
 	fs.Int("probe-retries", 1, "retries per HTTP probe")
 	fs.Bool("probe-follow-redirects", false, "follow redirects while probing; the Location target is recorded either way")

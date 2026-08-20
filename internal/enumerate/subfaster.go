@@ -65,6 +65,12 @@ func NewSubfaster(opts Options) (*Subfaster, error) {
 		return nil, errors.New("enumerate: source timeout must be positive")
 	}
 
+	// The engine's source lookup is case-sensitive, and hands an empty set
+	// straight to os.Exit. Normalizing here means a caller that skipped the
+	// configuration layer cannot walk into that.
+	opts.Sources = lowerAll(opts.Sources)
+	opts.ExcludeSources = lowerAll(opts.ExcludeSources)
+
 	if err := validateSources(append(append([]string{}, opts.Sources...), opts.ExcludeSources...)); err != nil {
 		return nil, err
 	}
@@ -336,6 +342,17 @@ func effective(sources, excluded []string) []string {
 			continue
 		}
 		out = append(out, s)
+	}
+	return out
+}
+
+// lowerAll normalizes source names, dropping the empties.
+func lowerAll(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v = strings.ToLower(strings.TrimSpace(v)); v != "" {
+			out = append(out, v)
+		}
 	}
 	return out
 }

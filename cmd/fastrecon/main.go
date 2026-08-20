@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -138,6 +139,12 @@ func run(args []string) int {
 	stages, err := buildStages(ctx, cfg, log, creds, redactor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
+		// A scheduler keys its retry on the exit status. Reporting a network
+		// blip as a configuration error means it never retries something that
+		// would have worked on the next run.
+		if errors.Is(err, errRuntime) {
+			return exitFatal
+		}
 		return exitUsage
 	}
 
@@ -189,6 +196,12 @@ func run(args []string) int {
 // buildStages wires the stage implementations available in this build. The
 // stages beyond exclusion land in later phases; the pipeline reports the
 // ladder stopping rather than inventing an empty result.
+// errRuntime marks a preparation failure that is transient rather than a
+// mistake in the configuration: an unreachable resolver list, a health check
+// that found nothing usable. It selects the exit code, which is the only
+// signal a job scheduler has.
+var errRuntime = errors.New("runtime failure")
+
 // deliveryContext bounds the report delivery, using the slice of the run
 // budget that was reserved for exactly this.
 func deliveryContext(cfg *config.Config) (context.Context, context.CancelFunc) {
@@ -210,14 +223,20 @@ func resolveCredentials(cfg *config.Config, log *slog.Logger) map[string]secrets
 		return nil
 	}
 
-	wanted := cfg.Sources
+	// Cloned: appending to cfg.Sources would write into its backing array
+	// whenever it has spare capacity.
+	wanted := slices.Clone(cfg.Sources)
 	if cfg.AllSources {
 		for _, s := range enumerate.Available() {
 			wanted = append(wanted, s.Name)
 		}
+		slices.Sort(wanted)
+		wanted = slices.Compact(wanted)
 	}
 	creds := resolver.Resolve(wanted)
-	logCredentials(log, cfg.Sources, creds)
+	// Reported against every source that will be queried, not just the
+	// default five: under --all-sources the two differ completely.
+	logCredentials(log, wanted, creds)
 	return creds
 }
 
@@ -285,6 +304,7 @@ func buildStages(ctx context.Context, cfg *config.Config, log *slog.Logger, cred
 	if cfg.Scope.Includes(stage.HTTPProbe) {
 		prober, err := probe.New(probe.Options{
 			Concurrency:     cfg.ProbeConcurrency,
+			Rate:            cfg.ProbeRate,
 			Timeout:         cfg.ProbeTimeout,
 			Retries:         cfg.ProbeRetries,
 			FollowRedirects: cfg.ProbeFollowRedirects,
@@ -312,6 +332,11 @@ func buildResolverPool(ctx context.Context, cfg *config.Config, log *slog.Logger
 		Logger: log,
 	})
 	if err != nil {
+		// Fetching a list over the network can fail for reasons that have
+		// nothing to do with the configuration being wrong.
+		if cfg.ResolversURL != "" {
+			return nil, fmt.Errorf("%w: %w", errRuntime, err)
+		}
 		return nil, err
 	}
 	log.Info("resolvers loaded", "count", len(resolvers))
@@ -327,7 +352,7 @@ func buildResolverPool(ctx context.Context, cfg *config.Config, log *slog.Logger
 		Logger:      log,
 	})
 	if len(health.Good) == 0 {
-		return nil, fmt.Errorf("every one of the %d configured resolvers failed the health check", len(resolvers))
+		return nil, fmt.Errorf("%w: every one of the %d configured resolvers failed the health check", errRuntime, len(resolvers))
 	}
 	// These reach the report, not just the log: a resolution done through a
 	// pool that lost half its members is a result worth qualifying.

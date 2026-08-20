@@ -12,7 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
 	"github.com/JoshuaMart/FastRecon/internal/report"
 )
 
@@ -75,7 +77,7 @@ func TestAttachWritesResultsOntoTheRightPort(t *testing.T) {
 
 func newProber(t *testing.T, probe func(context.Context, string, int) *report.HTTP) *HTTPX {
 	t.Helper()
-	return &HTTPX{opts: Options{Concurrency: 4, Logger: discardLogger()}, probe: probe}
+	return &HTTPX{opts: Options{Concurrency: 4, Logger: discardLogger()}, probe: probe, limiter: ratelimit.New(0)}
 }
 
 func TestProbeSkipsWhenNothingIsOpen(t *testing.T) {
@@ -142,6 +144,21 @@ func TestTruncateKeepsPathologicalTitlesOutOfTheReport(t *testing.T) {
 	got := truncate(long, maxTitleLength)
 	if len([]rune(got)) != maxTitleLength+1 {
 		t.Errorf("truncate produced %d runes, want the limit plus an ellipsis", len([]rune(got)))
+	}
+}
+
+// A title cut at a byte offset can land inside a multi-byte rune, and the
+// JSON encoder then silently rewrites the broken tail.
+func TestTruncateNeverSplitsARune(t *testing.T) {
+	for _, r := range []string{"あ", "é", "→", "🙂"} {
+		title := strings.Repeat(r, maxTitleLength)
+		got := truncate(title, maxTitleLength)
+		if !utf8.ValidString(got) {
+			t.Errorf("truncate(%q…) produced invalid UTF-8", r)
+		}
+		if len(got) > maxTitleLength+len("…") {
+			t.Errorf("truncate(%q…) = %d bytes, want it within the limit", r, len(got))
+		}
 	}
 }
 

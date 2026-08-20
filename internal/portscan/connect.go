@@ -6,7 +6,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"time"
 )
 
 // scanConnect performs a TCP connect scan.
@@ -24,11 +23,10 @@ func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports por
 		return map[string][]int{}, nil
 	}
 
-	targets := plan(addresses, list)
 	s.opts.Logger.Debug("connect scan started",
 		"addresses", len(addresses),
 		"ports", len(list),
-		"probes", len(targets),
+		"probes", len(addresses)*len(list),
 		"concurrency", s.opts.Concurrency,
 		"rate", s.opts.Rate,
 	)
@@ -37,34 +35,34 @@ func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports por
 		found = map[string][]int{}
 		mu    sync.Mutex
 		wg    sync.WaitGroup
-		sem   = make(chan struct{}, s.opts.Concurrency)
 	)
-	limiter := newLimiter(s.opts.Rate)
-	defer limiter.stop()
 
-	for _, t := range targets {
-		if ctx.Err() != nil {
-			break
-		}
+	// A fixed pool consuming a stream of targets. Spawning one goroutine per
+	// probe would allocate a stack for every (address, port) pair up front —
+	// a full sweep of fifty addresses is millions of them, and the process is
+	// killed for memory long before the deadline it was budgeted.
+	queue := make(chan target)
+	for range s.opts.Concurrency {
 		wg.Add(1)
-		go func(t target) {
+		go func() {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				return
+			for t := range queue {
+				if ctx.Err() != nil {
+					return
+				}
+				if !s.limiter.Wait(ctx) {
+					return
+				}
+				if s.probe(ctx, t) {
+					mu.Lock()
+					found[t.address] = append(found[t.address], t.port)
+					mu.Unlock()
+				}
 			}
-			if !limiter.wait(ctx) {
-				return
-			}
-			if s.probe(ctx, t) {
-				mu.Lock()
-				found[t.address] = append(found[t.address], t.port)
-				mu.Unlock()
-			}
-		}(t)
+		}()
 	}
+
+	feed(ctx, queue, addresses, list)
 	wg.Wait()
 
 	return found, nil
@@ -75,17 +73,23 @@ type target struct {
 	port    int
 }
 
-// plan orders the probes port-major: every address is tried on one port
+// feed streams the probes port-major: every address is tried on one port
 // before moving to the next. Address-major order would hammer a single host
 // with the whole port list back to back.
-func plan(addresses []string, ports []int) []target {
-	out := make([]target, 0, len(addresses)*len(ports))
+//
+// Targets are generated rather than materialised: the full list for a wide
+// sweep is itself large enough to be worth not holding.
+func feed(ctx context.Context, queue chan<- target, addresses []string, ports []int) {
+	defer close(queue)
 	for _, p := range ports {
 		for _, a := range addresses {
-			out = append(out, target{address: a, port: p})
+			select {
+			case queue <- target{address: a, port: p}:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
-	return out
 }
 
 // probe reports whether a TCP handshake completes, retrying only the
@@ -121,67 +125,3 @@ func isInconclusive(err error) bool {
 	// Local resource exhaustion says nothing about the target either.
 	return errors.Is(err, syscallEMFILE) || errors.Is(err, syscallENFILE)
 }
-
-// limiter is a token bucket capping probes per second. A scan that ignores
-// rate is indistinguishable from an attack from the target's side.
-type limiter struct {
-	tokens chan struct{}
-	done   chan struct{}
-	once   sync.Once
-}
-
-func newLimiter(perSecond int) *limiter {
-	l := &limiter{
-		tokens: make(chan struct{}, max(perSecond/10, 1)),
-		done:   make(chan struct{}),
-	}
-	if perSecond <= 0 {
-		close(l.done)
-		return l
-	}
-
-	interval := time.Second / time.Duration(perSecond)
-	// Below the timer's practical resolution, refill in batches instead of
-	// ticking per token.
-	batch := 1
-	if interval < time.Millisecond {
-		batch = int(time.Millisecond / interval)
-		interval = time.Millisecond
-	}
-
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-l.done:
-				return
-			case <-ticker.C:
-				for range batch {
-					select {
-					case l.tokens <- struct{}{}:
-					default:
-					}
-				}
-			}
-		}
-	}()
-	return l
-}
-
-// wait blocks for a token, reporting false if the run ended first.
-func (l *limiter) wait(ctx context.Context) bool {
-	select {
-	case <-l.done:
-		return true
-	default:
-	}
-	select {
-	case <-l.tokens:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
-func (l *limiter) stop() { l.once.Do(func() { close(l.done) }) }

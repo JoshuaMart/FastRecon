@@ -198,8 +198,13 @@ func TestParseRetryAfter(t *testing.T) {
 }
 
 func TestBackoffIsCapped(t *testing.T) {
-	if got := backoff(20, 0); got > maxBackoff {
-		t.Errorf("backoff = %s, want it capped at %s", got, maxBackoff)
+	// The shift overflows int64 past ~35 attempts; a negative duration then
+	// panics the jitter, crashing the process after the report was produced.
+	for _, attempt := range []int{1, 2, 16, 20, 35, 64, 1000} {
+		got := backoff(attempt, 0)
+		if got <= 0 || got > maxBackoff {
+			t.Errorf("backoff(%d) = %s, want a positive wait within %s", attempt, got, maxBackoff)
+		}
 	}
 	if got := backoff(1, time.Hour); got != maxBackoff {
 		t.Errorf("a huge Retry-After gave %s, want it capped at %s", got, maxBackoff)

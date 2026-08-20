@@ -66,6 +66,7 @@ func Load(fs *pflag.FlagSet) (*Config, error) {
 	cfg.ScanRetries = l.int("scan-retries")
 
 	cfg.ProbeConcurrency = l.int("probe-concurrency")
+	cfg.ProbeRate = l.int("probe-rate")
 	cfg.ProbeTimeout = l.dur("probe-timeout")
 	cfg.ProbeRetries = l.int("probe-retries")
 	cfg.ProbeFollowRedirects = l.bool("probe-follow-redirects")
@@ -276,7 +277,7 @@ func (l *loader) strs(name string) []string {
 		return v
 	}
 	if s, ok := lookupEnv(name); ok {
-		return splitList(s, !headerFlags[name])
+		return splitValue(name, s)
 	}
 	if raw, ok := l.file[name]; ok {
 		switch t := raw.(type) {
@@ -287,13 +288,45 @@ func (l *loader) strs(name string) []string {
 			}
 			return out
 		case string:
-			return splitList(t, !headerFlags[name])
+			return splitValue(name, t)
 		default:
 			l.errf("%s: expected a list in the config file", name)
 			return v
 		}
 	}
 	return v
+}
+
+// splitValue applies the flag's separator rule to an environment or config
+// value.
+func splitValue(name, value string) []string {
+	if patternFlags[name] {
+		return splitPatterns(value)
+	}
+	return splitList(value, !newlineOnlyFlags[name])
+}
+
+// splitPatterns separates exclusion patterns.
+//
+// Lines are the outer separator. A line starting with "re:" is a single
+// pattern, kept whole — a regexp may contain commas, and cutting one produces
+// two halves that still compile, so the mistake would be silent. Any other
+// line is a comma-separated list of hosts and wildcards, which is what makes
+// the compact form usable in a job's environment variable.
+func splitPatterns(value string) []string {
+	var out []string
+	for line := range strings.SplitSeq(value, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "re:") {
+			out = append(out, line)
+			continue
+		}
+		out = append(out, splitList(line, true)...)
+	}
+	return out
 }
 
 func splitList(s string, splitComma bool) []string {

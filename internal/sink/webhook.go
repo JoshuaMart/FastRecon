@@ -39,9 +39,14 @@ type Webhook struct {
 	sleep func(ctx context.Context, d time.Duration) bool
 }
 
-// maxBackoff caps the exponential wait so a long retry chain cannot outlive
-// the deadline it is running under.
-const maxBackoff = 30 * time.Second
+const (
+	// maxBackoff caps the exponential wait so a long retry chain cannot
+	// outlive the deadline it is running under.
+	maxBackoff = 30 * time.Second
+	// maxShift is the largest exponent worth computing; beyond it the cap
+	// applies and the shift would overflow.
+	maxShift = 16
+)
 
 // NewWebhook builds the sink.
 func NewWebhook(opts WebhookOptions) (*Webhook, error) {
@@ -182,8 +187,12 @@ func backoff(attempt int, requested time.Duration) time.Duration {
 	if requested > 0 {
 		return min(requested, maxBackoff)
 	}
-	wait := time.Second << (attempt - 1)
-	wait = min(wait, maxBackoff)
+	// The shift overflows int64 past ~35 attempts, and a negative duration
+	// then panics the jitter. The cap is reached long before that anyway.
+	wait := maxBackoff
+	if attempt <= maxShift {
+		wait = min(time.Second<<(attempt-1), maxBackoff)
+	}
 	// Jitter keeps several jobs retrying in lockstep from synchronising.
 	return wait/2 + time.Duration(rand.Int64N(int64(wait/2)+1))
 }

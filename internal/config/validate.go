@@ -41,8 +41,20 @@ func (c *Config) Validate() error {
 		fail("ports must not be empty")
 	}
 
+	// Source names are matched case-sensitively by the engine, so they are
+	// normalized here, once, rather than at each of the several places that
+	// look them up.
+	c.Sources = lowerAll(c.Sources)
+	c.ExcludeSources = lowerAll(c.ExcludeSources)
 	if !c.AllSources && len(c.Sources) == 0 {
 		fail("no enumeration source selected: set --sources or --all-sources")
+	}
+
+	// The enumeration engine takes its per-source ceiling in whole seconds,
+	// and truncates: anything under a second silently becomes no ceiling at
+	// all, letting one hung source consume the entire stage budget.
+	if c.SourceTimeout > 0 && c.SourceTimeout < time.Second {
+		fail("source-timeout must be at least 1s, got %s: the engine takes whole seconds and would round it to no timeout", c.SourceTimeout)
 	}
 
 	for _, p := range []struct {
@@ -53,6 +65,7 @@ func (c *Config) Validate() error {
 		{"wildcard-probes", c.WildcardProbes},
 		{"scan-concurrency", c.ScanConcurrency},
 		{"probe-concurrency", c.ProbeConcurrency},
+		{"probe-rate", c.ProbeRate},
 	} {
 		if p.v < 1 {
 			fail("%s must be at least 1, got %d", p.name, p.v)
@@ -169,6 +182,20 @@ func NormalizeDomain(d string) (string, error) {
 		return "", fmt.Errorf("domain %q is not a valid domain name", d)
 	}
 	return d, nil
+}
+
+// lowerAll normalizes a list of names, dropping the empties.
+func lowerAll(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v = strings.ToLower(strings.TrimSpace(v)); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func hasNonASCII(s string) bool {
