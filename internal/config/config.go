@@ -12,6 +12,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/JoshuaMart/FastRecon/internal/report"
@@ -119,6 +120,23 @@ const (
 
 // StdoutPath is the Output value that selects the stdout sink.
 const StdoutPath = "-"
+
+// Clone deep-copies the configuration.
+//
+// A served request overlays its own fields onto the process configuration, so
+// the copy has to be independent: sharing a slice would let one request's
+// exclusions leak into the next.
+func (c *Config) Clone() *Config {
+	out := *c
+	out.Exclude = slices.Clone(c.Exclude)
+	out.Sources = slices.Clone(c.Sources)
+	out.ExcludeSources = slices.Clone(c.ExcludeSources)
+	out.Resolvers = slices.Clone(c.Resolvers)
+	out.ProbeHeaders = slices.Clone(c.ProbeHeaders)
+	out.WebhookHeaders = slices.Clone(c.WebhookHeaders)
+	out.Warnings = slices.Clone(c.Warnings)
+	return &out
+}
 
 // Sinks reports which destinations are configured.
 func (c *Config) Sinks() (stdout, file, webhook bool) {

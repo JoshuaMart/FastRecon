@@ -80,12 +80,11 @@ func NewSubfaster(opts Options) (*Subfaster, error) {
 		return nil, errors.New("enumerate: no sources selected; every source is excluded")
 	}
 
-	// The engine reads keys from the upstream environment variables only, so
-	// the resolved credentials are published there once, before any agent
-	// exists.
-	if err := secrets.Export(opts.Credentials); err != nil {
-		return nil, err
-	}
+	// Credentials are not published here: the engine reads them from the
+	// process environment, which is global, so they are exported once by the
+	// caller before any enumerator exists. Doing it per construction would
+	// mean a process serving several runs rewrote them under the one in
+	// flight.
 
 	loggerOnce.Do(func() {
 		gologger.DefaultLogger.SetMaxLevel(levels.LevelVerbose)

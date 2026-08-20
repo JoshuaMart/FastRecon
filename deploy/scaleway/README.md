@@ -68,8 +68,38 @@ The function deployment is container-based: the same image, started with the
 job, because a function's timeout is the tightest of the four environments and
 work does not survive the response being returned.
 
-This deployment lands with phase 8; `fastrecon serve` currently exits with a
-usage error rather than starting a handler.
+```sh
+scw function create \
+  name=fastrecon \
+  runtime=docker \
+  registry-image="$IMAGE" \
+  memory-limit=2048 \
+  timeout=900s \
+  environment-variables.FASTRECON_ENVIRONMENT=serverless-function \
+  environment-variables.FASTRECON_SOURCES=chaos,securitytrails,c99,submd,crt \
+  secret-environment-variables.FASTRECON_API_TOKEN=...
+```
+
+The container is started with the `serve` argument. Deploy it with a
+**per-instance concurrency of 1**: the enumeration engine keeps per-run state on
+globally shared instances, so a second concurrent request on one instance is
+refused with `429` rather than corrupting both runs. Scale by adding instances,
+not by sharing one.
+
+Calling it:
+
+```sh
+curl -X POST "$FUNCTION_URL/run" \
+  -H "Authorization: Bearer $FASTRECON_API_TOKEN" \
+  -d '{"domain":"example.com","stages":"enum"}'
+```
+
+The request says what to scan, never how the function is wired: credentials,
+sources, resolvers and any webhook destination come from the function's
+environment. An unknown field in the body is rejected rather than ignored, so a
+caller who believes they configured something is told they did not.
+
+`fastrecon serve` refuses to start without `FASTRECON_API_TOKEN`.
 
 ## Notes
 

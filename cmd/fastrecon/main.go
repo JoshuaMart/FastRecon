@@ -11,24 +11,18 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/pflag"
 
+	"github.com/JoshuaMart/FastRecon/internal/app"
 	"github.com/JoshuaMart/FastRecon/internal/config"
 	"github.com/JoshuaMart/FastRecon/internal/enumerate"
-	"github.com/JoshuaMart/FastRecon/internal/exclude"
 	"github.com/JoshuaMart/FastRecon/internal/logging"
-	"github.com/JoshuaMart/FastRecon/internal/pipeline"
-	"github.com/JoshuaMart/FastRecon/internal/portscan"
-	"github.com/JoshuaMart/FastRecon/internal/probe"
-	"github.com/JoshuaMart/FastRecon/internal/resolve"
-	"github.com/JoshuaMart/FastRecon/internal/secrets"
+	"github.com/JoshuaMart/FastRecon/internal/serve"
 	"github.com/JoshuaMart/FastRecon/internal/sink"
-	"github.com/JoshuaMart/FastRecon/internal/stage"
 	"github.com/JoshuaMart/FastRecon/internal/version"
 )
 
@@ -53,8 +47,7 @@ func dispatch(args []string) int {
 			fmt.Println("fastrecon", version.String())
 			return exitOK
 		case "serve":
-			fmt.Fprintln(os.Stderr, "fastrecon: serve mode is not part of this build yet (see SPECIFICATIONS.md, phase 8)")
-			return exitUsage
+			return serveMode(args[1:])
 		case "run":
 			args = args[1:]
 		case "sources":
@@ -66,6 +59,59 @@ func dispatch(args []string) int {
 		}
 	}
 	return run(args)
+}
+
+// serveMode answers run requests over HTTP, for the function deployment.
+func serveMode(args []string) int {
+	fs := newFlagSet()
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return exitOK
+		}
+		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
+		return exitUsage
+	}
+
+	// The domain is not known at startup here: it arrives with each request.
+	cfg, err := config.LoadServe(fs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fastrecon: invalid configuration:\n%v\n", err)
+		return exitUsage
+	}
+	// Labelled explicitly rather than guessed: nothing inside the process
+	// distinguishes a function from any other container.
+	if cfg.Environment == "" {
+		cfg.Environment = config.EnvServerlessFunction
+	}
+
+	log, err := logging.New(cfg.LogLevel, cfg.LogFormat)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
+		return exitUsage
+	}
+	for _, w := range cfg.Warnings {
+		log.Warn("configuration", "warning", w)
+	}
+
+	application, err := app.New(cfg, log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
+		return exitUsage
+	}
+	server, err := serve.New(application, cfg, log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
+		return exitUsage
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := server.ListenAndServe(ctx, cfg.Listen); err != nil {
+		log.Error("serve failed", "error", err)
+		return exitFatal
+	}
+	return exitOK
 }
 
 func newFlagSet() *pflag.FlagSet {
@@ -133,25 +179,25 @@ func run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	creds := resolveCredentials(cfg, log)
-	redactor := secrets.NewRedactor(creds)
+	application, err := app.New(cfg, log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
+		return exitUsage
+	}
 
-	stages, err := buildStages(ctx, cfg, log, creds, redactor)
+	rep, err := application.Run(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
 		// A scheduler keys its retry on the exit status. Reporting a network
 		// blip as a configuration error means it never retries something that
 		// would have worked on the next run.
-		if errors.Is(err, errRuntime) {
+		if errors.Is(err, app.ErrRuntime) {
 			return exitFatal
 		}
+		// Everything else that stops a run before it starts is a mistake in
+		// the configuration: an unparseable exclusion, an impossible scan
+		// mode, a port list that is not one.
 		return exitUsage
-	}
-
-	rep, err := pipeline.New(cfg, stages, log).Run(ctx)
-	if err != nil {
-		log.Error("run failed", "error", err)
-		return exitFatal
 	}
 
 	data, err := rep.Render(cfg.Format)
@@ -159,7 +205,7 @@ func run(args []string) int {
 		log.Error("render report", "error", err)
 		return exitFatal
 	}
-	data = redactor.RedactBytes(data)
+	data = application.Redactor().RedactBytes(data)
 
 	sinks, err := buildSinks(cfg, log)
 	if err != nil {
@@ -193,15 +239,6 @@ func run(args []string) int {
 	}
 }
 
-// buildStages wires the stage implementations available in this build. The
-// stages beyond exclusion land in later phases; the pipeline reports the
-// ladder stopping rather than inventing an empty result.
-// errRuntime marks a preparation failure that is transient rather than a
-// mistake in the configuration: an unreachable resolver list, a health check
-// that found nothing usable. It selects the exit code, which is the only
-// signal a job scheduler has.
-var errRuntime = errors.New("runtime failure")
-
 // deliveryContext bounds the report delivery, using the slice of the run
 // budget that was reserved for exactly this.
 func deliveryContext(cfg *config.Config) (context.Context, context.CancelFunc) {
@@ -210,172 +247,6 @@ func deliveryContext(cfg *config.Config) (context.Context, context.CancelFunc) {
 		budget = 30 * time.Second
 	}
 	return context.WithTimeout(context.WithoutCancel(context.Background()), budget)
-}
-
-// resolveCredentials resolves the source keys once, up front. The values are
-// process-global from here on, so they are settled before any stage exists.
-func resolveCredentials(cfg *config.Config, log *slog.Logger) map[string]secrets.Credential {
-	resolver, err := secrets.NewResolver(cfg.ProviderConfig)
-	if err != nil {
-		// A provider config that cannot be read is reported by the stage that
-		// needs it; a run without keys is still a run.
-		log.Warn("provider config unusable", "error", err)
-		return nil
-	}
-
-	// Cloned: appending to cfg.Sources would write into its backing array
-	// whenever it has spare capacity.
-	wanted := slices.Clone(cfg.Sources)
-	if cfg.AllSources {
-		for _, s := range enumerate.Available() {
-			wanted = append(wanted, s.Name)
-		}
-		slices.Sort(wanted)
-		wanted = slices.Compact(wanted)
-	}
-	creds := resolver.Resolve(wanted)
-	// Reported against every source that will be queried, not just the
-	// default five: under --all-sources the two differ completely.
-	logCredentials(log, wanted, creds)
-	return creds
-}
-
-func buildStages(ctx context.Context, cfg *config.Config, log *slog.Logger, creds map[string]secrets.Credential, redactor *secrets.Redactor) (pipeline.Stages, error) {
-	enumerator, err := enumerate.NewSubfaster(enumerate.Options{
-		Sources:        cfg.Sources,
-		ExcludeSources: cfg.ExcludeSources,
-		All:            cfg.AllSources,
-		SourceTimeout:  cfg.SourceTimeout,
-		Credentials:    creds,
-		Redactor:       redactor,
-		Logger:         log,
-	})
-	if err != nil {
-		return pipeline.Stages{}, err
-	}
-
-	excluder, err := exclude.New(cfg.Exclude, cfg.ExcludeStrictWildcard)
-	if err != nil {
-		return pipeline.Stages{}, fmt.Errorf("invalid exclusions:\n%w", err)
-	}
-
-	stages := pipeline.Stages{Enumerator: enumerator, Excluder: excluder}
-
-	// Built only when the scope reaches it: a resolver constructed for an
-	// enumeration-only run would open sockets nothing asked for.
-	if cfg.Scope.Includes(stage.Resolve) {
-		resolvers, err := buildResolverPool(ctx, cfg, log)
-		if err != nil {
-			return pipeline.Stages{}, err
-		}
-		resolver, err := resolve.New(resolve.Options{
-			Domain:         cfg.Domain,
-			Resolvers:      resolvers,
-			Concurrency:    cfg.ResolverConcurrency,
-			Retries:        cfg.ResolverRetries,
-			Timeout:        cfg.ResolverTimeout,
-			WildcardProbes: cfg.WildcardProbes,
-			Logger:         log,
-		})
-		if err != nil {
-			return pipeline.Stages{}, err
-		}
-		stages.Resolver = resolver
-	}
-
-	if cfg.Scope.Includes(stage.PortScan) {
-		scanner, err := portscan.New(portscan.Options{
-			Mode:         cfg.ScanMode,
-			Ports:        cfg.Ports,
-			ExcludePorts: cfg.ExcludePorts,
-			SkipCDN:      cfg.SkipCDN,
-			Concurrency:  cfg.ScanConcurrency,
-			Rate:         cfg.ScanRate,
-			Retries:      cfg.ScanRetries,
-			Timeout:      cfg.ScanTimeout,
-			Logger:       log,
-		})
-		if err != nil {
-			return pipeline.Stages{}, err
-		}
-		stages.PortScanner = scanner
-	}
-
-	if cfg.Scope.Includes(stage.HTTPProbe) {
-		prober, err := probe.New(probe.Options{
-			Concurrency:     cfg.ProbeConcurrency,
-			Rate:            cfg.ProbeRate,
-			Timeout:         cfg.ProbeTimeout,
-			Retries:         cfg.ProbeRetries,
-			FollowRedirects: cfg.ProbeFollowRedirects,
-			MaxRedirects:    cfg.ProbeMaxRedirects,
-			UserAgent:       cfg.ProbeUserAgent,
-			Headers:         cfg.ProbeHeaders,
-			Logger:          log,
-		})
-		if err != nil {
-			return pipeline.Stages{}, err
-		}
-		stages.Prober = prober
-	}
-
-	return stages, nil
-}
-
-// buildResolverPool assembles the resolver list and, unless told otherwise,
-// removes the resolvers that cannot be trusted to answer correctly.
-func buildResolverPool(ctx context.Context, cfg *config.Config, log *slog.Logger) ([]string, error) {
-	resolvers, err := resolve.LoadResolvers(ctx, resolve.LoadOptions{
-		Inline: cfg.Resolvers,
-		File:   cfg.ResolversFile,
-		URL:    cfg.ResolversURL,
-		Logger: log,
-	})
-	if err != nil {
-		// Fetching a list over the network can fail for reasons that have
-		// nothing to do with the configuration being wrong.
-		if cfg.ResolversURL != "" {
-			return nil, fmt.Errorf("%w: %w", errRuntime, err)
-		}
-		return nil, err
-	}
-	log.Info("resolvers loaded", "count", len(resolvers))
-
-	if !cfg.ValidateResolvers {
-		return resolvers, nil
-	}
-
-	health := resolve.CheckResolvers(ctx, resolvers, resolve.HealthOptions{
-		Budget:      cfg.ResolverHealthBudget,
-		Timeout:     cfg.ResolverTimeout,
-		Concurrency: cfg.ResolverConcurrency,
-		Logger:      log,
-	})
-	if len(health.Good) == 0 {
-		return nil, fmt.Errorf("%w: every one of the %d configured resolvers failed the health check", errRuntime, len(resolvers))
-	}
-	// These reach the report, not just the log: a resolution done through a
-	// pool that lost half its members is a result worth qualifying.
-	if len(health.Dropped) > 0 {
-		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("%d of %d resolvers dropped by the health check", len(health.Dropped), len(resolvers)))
-	}
-	if health.Unchecked > 0 {
-		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("%d of %d resolvers were kept unchecked: the health budget ran out", health.Unchecked, len(resolvers)))
-	}
-	return health.Good, nil
-}
-
-// logCredentials reports which sources have a key and where it came from.
-// Values are never logged, not even truncated.
-func logCredentials(log *slog.Logger, sources []string, creds map[string]secrets.Credential) {
-	inv := secrets.Take(sources, creds)
-	for source, origin := range inv.Configured {
-		log.Debug("source credential", "source", source, "origin", origin)
-	}
-	log.Info("credentials resolved",
-		"configured", len(inv.Configured),
-		"missing", inv.Missing,
-	)
 }
 
 func listSources() {

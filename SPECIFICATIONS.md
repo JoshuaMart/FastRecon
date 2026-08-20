@@ -111,14 +111,12 @@ run configuration and calls the same pipeline the CLI calls.
   the report in the response body. Work that cannot fit in a function timeout belongs in a
   job — that is the split between the two deployments, and the documentation must say so
   plainly rather than offering a fire-and-forget mode that intermittently loses runs.
-- **Concurrency and reuse.** The process must be safe for sequential reuse across invocations
-  on a warm instance: no global mutable state between runs, and all per-run resources
-  (resolver pools, HTTP clients, goroutines) torn down when the run ends. Each run gets its
-  own context and its own cancellation.
+- **Concurrency and reuse.** See §4.3 — the engine makes this the hardest constraint of the
+  deployment, and it is resolved by freezing how the engine is wired and serializing runs.
 - **Authentication.** The handler requires a shared token (`--api-token` /
   `FASTRECON_API_TOKEN`) compared in constant time, in addition to whatever the platform
-  provides. An unauthenticated subdomain-enumeration endpoint is an open relay for someone
-  else's recon and burns your API quotas.
+  provides. `serve` refuses to start without one: an unauthenticated subdomain-enumeration
+  endpoint is free reconnaissance for whoever finds it, charged to your API quotas.
 
 #### Request and response
 
@@ -137,9 +135,55 @@ Authorization: Bearer <token>
 ```
 
 The response body is the same report document defined in §13.2. `GET /healthz` returns
-readiness for the platform's probe. Any field omitted from the body falls back to the
-environment-variable configuration, so a function can be deployed fully pre-configured and
-called with `{"domain": "..."}` alone.
+readiness for the platform's probe, without a token. Any field omitted from the body falls
+back to the environment-variable configuration, so a function can be deployed fully
+pre-configured and called with `{"domain": "..."}` alone.
+
+| Status | Meaning |
+|---|---|
+| `200` | report produced — **including a partial one**, which says so in `completed` and `truncated_by_timeout` |
+| `400` | malformed body, or a configuration the run rejected |
+| `401` | missing or wrong token |
+| `429` | a run is already in progress on this instance; `Retry-After` set |
+| `500` | a transient failure of ours: no report produced |
+
+The `400`/`500` split mirrors the exit codes exactly: a preparation failure marked transient
+is ours, anything else is the caller's. Not every option can be checked before a stage is
+built — a port expression is parsed by the scanner — so some caller mistakes surface once the
+run starts and still return `400`, with the offending part named.
+
+An **unknown field in the body is rejected**, not ignored. Most of them name an option that
+is deliberately not caller-settable, and silently dropping it would run a scan the caller did
+not ask for while reporting success.
+
+### 4.3 What the request may not set, and why
+
+The request says **what to scan**, never how the deployment is wired. Credentials, the source
+selection, the resolver pool and the webhook destination come from the function's
+environment.
+
+This is not tidiness. The enumeration engine keeps API keys on **globally shared source
+instances** and overwrites them on each configuration, and the per-source counters that become
+the report's `sources` block live on those same instances. Two runs in one process would
+overwrite each other's keys and report each other's statistics. Verified in the engine's
+source, not assumed — and note that repetition is harmless there, since the keys are replaced
+rather than appended; it is concurrency that breaks it.
+
+Two consequences, and one rejected option:
+
+- **Credentials and sources are settled once, at startup**, before any stage exists. A request
+  cannot supply them, so no request can disturb another's.
+- **One run at a time per instance.** A second concurrent request is refused with `429` and a
+  `Retry-After` rather than queued: a queued request spends its own deadline waiting and then
+  reports a timeout that explains nothing. Deploy the function with a per-instance concurrency
+  of 1 and this never fires; it is a guard, not a mode.
+- **No caller-supplied webhook URL.** The caller already receives the report in the response;
+  letting them name a destination would turn the function into a request-forwarding gadget
+  onto its own network, reachable by anyone holding the token.
+
+Rejected: forking the engine so keys live per run. It is a fork of forty-seven source
+integrations to solve what freezing plus a mutex solves for nothing — and not maintaining
+those integrations is the whole reason the engine is a dependency.
 
 ## 5. Pipeline
 

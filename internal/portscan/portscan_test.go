@@ -130,13 +130,12 @@ func TestCDNEntriesGroupPerProvider(t *testing.T) {
 	}
 }
 
-func newScanner(t *testing.T, skipCDN bool, scan func(context.Context, []string, portSpec) (map[string][]int, error)) *Scanner {
+func newScanner(t *testing.T, skipCDN bool, scan func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error)) *Scanner {
 	t.Helper()
 	return &Scanner{
-		opts:    Options{SkipCDN: skipCDN, Mode: ModeConnect, Logger: discardLogger()},
-		ports:   portSpec{TopPorts: "100"},
-		scan:    scan,
-		limiter: ratelimit.New(0),
+		opts:  Options{SkipCDN: skipCDN, Mode: ModeConnect, Logger: discardLogger()},
+		ports: portSpec{TopPorts: "100"},
+		scan:  scan,
 	}
 }
 
@@ -144,7 +143,7 @@ func newScanner(t *testing.T, skipCDN bool, scan func(context.Context, []string,
 // onto every one of them.
 func TestScanMapsResultsBackOntoSharedAddresses(t *testing.T) {
 	var passes [][]string
-	n := newScanner(t, true, func(_ context.Context, addresses []string, _ portSpec) (map[string][]int, error) {
+	n := newScanner(t, true, func(_ context.Context, addresses []string, _ portSpec, _ *ratelimit.Limiter) (map[string][]int, error) {
 		passes = append(passes, addresses)
 		return map[string][]int{"1.2.3.4": {80, 443}}, nil
 	})
@@ -173,7 +172,7 @@ func TestScanMapsResultsBackOntoSharedAddresses(t *testing.T) {
 }
 
 func TestScanDeduplicatesPortsAcrossAHostAddresses(t *testing.T) {
-	n := newScanner(t, true, func(context.Context, []string, portSpec) (map[string][]int, error) {
+	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error) {
 		return map[string][]int{"1.2.3.4": {443, 80}, "5.6.7.8": {80, 8080}}, nil
 	})
 
@@ -197,7 +196,7 @@ func TestScanDeduplicatesPortsAcrossAHostAddresses(t *testing.T) {
 
 func TestScanWithNoLiveHostDoesNothing(t *testing.T) {
 	called := false
-	n := newScanner(t, true, func(context.Context, []string, portSpec) (map[string][]int, error) {
+	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error) {
 		called = true
 		return nil, nil
 	})
@@ -215,7 +214,7 @@ func TestScanWithNoLiveHostDoesNothing(t *testing.T) {
 }
 
 func TestScanReportsTruncationWhenTheDeadlinePasses(t *testing.T) {
-	n := newScanner(t, true, func(context.Context, []string, portSpec) (map[string][]int, error) {
+	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error) {
 		return map[string][]int{"1.2.3.4": {80}}, nil
 	})
 
@@ -254,7 +253,7 @@ func TestSynModeIsRefusedNotSilentlyDowngraded(t *testing.T) {
 }
 
 func TestExpandPorts(t *testing.T) {
-	s := &Scanner{opts: Options{Logger: discardLogger()}, limiter: ratelimit.New(0)}
+	s := &Scanner{opts: Options{Logger: discardLogger()}}
 
 	got, err := s.expand(portSpec{List: "443,80,80,8000-8002"})
 	if err != nil {
@@ -282,7 +281,7 @@ func TestExpandPorts(t *testing.T) {
 }
 
 func TestExpandPortsAppliesExclusions(t *testing.T) {
-	s := &Scanner{opts: Options{ExcludePorts: "443,8001", Logger: discardLogger()}, limiter: ratelimit.New(0)}
+	s := &Scanner{opts: Options{ExcludePorts: "443,8001", Logger: discardLogger()}}
 	got, err := s.expand(portSpec{List: "80,443,8000-8002"})
 	if err != nil {
 		t.Fatal(err)
@@ -359,10 +358,10 @@ func TestConnectScanFindsAListeningPortAndNotAClosedOne(t *testing.T) {
 		Rate:        1000,
 		Timeout:     2 * time.Second,
 		Logger:      discardLogger(),
-	}, limiter: ratelimit.New(1000)}
+	}}
 
 	found, err := s.scanConnect(context.Background(), []string{"127.0.0.1"},
-		portSpec{List: strconv.Itoa(openPort) + "," + strconv.Itoa(closedPort)})
+		portSpec{List: strconv.Itoa(openPort) + "," + strconv.Itoa(closedPort)}, ratelimit.New(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +410,6 @@ func TestScanConnectGoroutinesStayBounded(t *testing.T) {
 			Timeout:     200 * time.Millisecond,
 			Logger:      discardLogger(),
 		},
-		limiter: ratelimit.New(0),
 	}
 
 	baseline := runtime.NumGoroutine()
@@ -433,7 +431,7 @@ func TestScanConnectGoroutinesStayBounded(t *testing.T) {
 
 	// Loopback high ports refuse instantly, so this measures scheduling, not
 	// network waits.
-	if _, err := s.scanConnect(context.Background(), []string{"127.0.0.1"}, portSpec{List: "20000-" + strconv.Itoa(20000+ports-1)}); err != nil {
+	if _, err := s.scanConnect(context.Background(), []string{"127.0.0.1"}, portSpec{List: "20000-" + strconv.Itoa(20000+ports-1)}, ratelimit.New(0)); err != nil {
 		t.Fatal(err)
 	}
 	close(stop)
@@ -443,5 +441,34 @@ func TestScanConnectGoroutinesStayBounded(t *testing.T) {
 	if limit := int64(baseline + workers + 50); peak.Load() > limit {
 		t.Errorf("peak goroutines = %d, want at most %d for %d probes at concurrency %d",
 			peak.Load(), limit, ports, workers)
+	}
+}
+
+// A warm instance serves many requests from one Scanner. Holding the limiter
+// on the scanner and stopping it at the end of a run left every later run
+// unlimited, which is invisible until a target notices.
+func TestRateLimitStillAppliesOnASecondScan(t *testing.T) {
+	var seen []*ratelimit.Limiter
+	s := newScanner(t, false, func(_ context.Context, _ []string, _ portSpec, l *ratelimit.Limiter) (map[string][]int, error) {
+		seen = append(seen, l)
+		if !l.Wait(context.Background()) {
+			t.Error("the limiter refused a token on a live context")
+		}
+		return map[string][]int{"1.2.3.4": {80}}, nil
+	})
+	s.opts.Rate = 100
+
+	hosts := []report.Host{{Host: "a.example.com", Status: report.StatusLive, Addresses: []string{"1.2.3.4"}}}
+	for run := range 2 {
+		if _, err := s.Scan(context.Background(), hosts); err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("scan ran %d times, want 2", len(seen))
+	}
+	if seen[0] == seen[1] {
+		t.Error("both runs shared one limiter; the second would run unlimited once the first stopped it")
 	}
 }

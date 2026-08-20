@@ -14,7 +14,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
 	"github.com/JoshuaMart/FastRecon/internal/report"
 )
 
@@ -77,7 +76,7 @@ func TestAttachWritesResultsOntoTheRightPort(t *testing.T) {
 
 func newProber(t *testing.T, probe func(context.Context, string, int) *report.HTTP) *HTTPX {
 	t.Helper()
-	return &HTTPX{opts: Options{Concurrency: 4, Logger: discardLogger()}, probe: probe, limiter: ratelimit.New(0)}
+	return &HTTPX{opts: Options{Concurrency: 4, Logger: discardLogger()}, probe: probe}
 }
 
 func TestProbeSkipsWhenNothingIsOpen(t *testing.T) {

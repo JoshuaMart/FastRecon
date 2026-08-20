@@ -50,13 +50,10 @@ type Scanner struct {
 	opts  Options
 	ports portSpec
 	cdn   *cdncheck.Client
-	// limiter is shared by both scan passes. One per pass would hand the full
-	// configured rate to each, so --scan-rate would not describe the run.
-	limiter *ratelimit.Limiter
 	// scan is the single point where sockets are opened. It is a field so the
 	// planning, batching and result-mapping logic can be tested without
 	// touching the network.
-	scan func(ctx context.Context, addresses []string, ports portSpec) (map[string][]int, error)
+	scan func(ctx context.Context, addresses []string, ports portSpec, limiter *ratelimit.Limiter) (map[string][]int, error)
 }
 
 // New validates the options and prepares the scanner.
@@ -91,7 +88,7 @@ func New(opts Options) (*Scanner, error) {
 		return nil, fmt.Errorf("portscan: unknown scan mode %q", opts.Mode)
 	}
 
-	s := &Scanner{opts: opts, ports: ports, cdn: cdncheck.New(), limiter: ratelimit.New(opts.Rate)}
+	s := &Scanner{opts: opts, ports: ports, cdn: cdncheck.New()}
 	s.scan = s.scanConnect
 	return s, nil
 }
@@ -106,7 +103,16 @@ func (s *Scanner) Name() string { return "connect" }
 // budget proving something already known.
 func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortScan, error) {
 	out := pipeline.PortScan{Hosts: hosts}
-	defer s.limiter.Stop()
+
+	// The limiter belongs to the run, not to the scanner. Holding it on the
+	// scanner and stopping it here left a reused instance with a stopped
+	// limiter, whose Wait returns immediately — the second run of a warm
+	// process would silently lose its rate limit entirely.
+	//
+	// One limiter for both passes: one per pass would hand the full
+	// configured rate to each, so --scan-rate would not describe the run.
+	limiter := ratelimit.New(s.opts.Rate)
+	defer limiter.Stop()
 
 	// Several subdomains commonly resolve to one address; scanning it once
 	// and mapping the result back is the difference between one scan and
@@ -133,7 +139,7 @@ func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortS
 	var truncated bool
 
 	if len(plain) > 0 {
-		found, err := s.scan(ctx, plain, s.ports)
+		found, err := s.scan(ctx, plain, s.ports, limiter)
 		if err != nil {
 			return out, err
 		}
@@ -143,7 +149,7 @@ func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortS
 		// The restricted pass: a CDN edge answers for thousands of unrelated
 		// customers, so its full port list describes the provider, not this
 		// target.
-		found, err := s.scan(ctx, behindEdge, portSpec{List: joinPorts(cdnPorts)})
+		found, err := s.scan(ctx, behindEdge, portSpec{List: joinPorts(cdnPorts)}, limiter)
 		if err != nil {
 			return out, err
 		}

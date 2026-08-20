@@ -15,15 +15,22 @@ var domainRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9
 
 // Validate normalizes the configuration and reports every problem at once,
 // rather than one per run.
-func (c *Config) Validate() error {
+func (c *Config) Validate() error { return c.validate(true) }
+
+// validate optionally tolerates an empty domain, which is the serve-mode case:
+// the target arrives with each request and is validated then, by these same
+// rules.
+func (c *Config) validate(requireDomain bool) error {
 	var errs []error
 	fail := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 
-	domain, err := NormalizeDomain(c.Domain)
-	if err != nil {
-		fail("%w", err)
+	if requireDomain || c.Domain != "" {
+		domain, err := NormalizeDomain(c.Domain)
+		if err != nil {
+			fail("%w", err)
+		}
+		c.Domain = domain
 	}
-	c.Domain = domain
 
 	if c.Timeout <= 0 {
 		fail("timeout must be positive, got %s", c.Timeout)

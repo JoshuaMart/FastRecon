@@ -54,9 +54,8 @@ type HTTPX struct {
 	// direct never follows redirects. It is the fallback for a service whose
 	// redirect target is unreachable: following the chain would fail the
 	// whole request and lose a response that is itself a finding.
-	direct  *httpx.HTTPX
-	tech    *wappalyzer.Wappalyze
-	limiter *ratelimit.Limiter
+	direct *httpx.HTTPX
+	tech   *wappalyzer.Wappalyze
 	// probe is the single point where requests happen, so the scheme
 	// selection and result mapping can be tested without a network.
 	probe func(ctx context.Context, host string, port int) *report.HTTP
@@ -115,7 +114,7 @@ func New(opts Options) (*HTTPX, error) {
 		return nil, fmt.Errorf("probe: technology fingerprints: %w", err)
 	}
 
-	h := &HTTPX{opts: opts, client: client, direct: direct, tech: tech, limiter: ratelimit.New(opts.Rate)}
+	h := &HTTPX{opts: opts, client: client, direct: direct, tech: tech}
 	h.probe = h.probeOne
 	return h, nil
 }
@@ -138,7 +137,12 @@ func (h *HTTPX) Probe(ctx context.Context, hosts []report.Host) (pipeline.Probe,
 	}
 
 	h.opts.Logger.Debug("http probe started", "targets", len(targets), "concurrency", h.opts.Concurrency, "rate", h.opts.Rate)
-	defer h.limiter.Stop()
+
+	// The limiter belongs to the run, not to the prober: a stopped limiter's
+	// Wait returns immediately, so a reused instance would lose its rate
+	// limit from the second run onwards.
+	limiter := ratelimit.New(h.opts.Rate)
+	defer limiter.Stop()
 
 	results := make([]*report.HTTP, len(targets))
 	var (
@@ -161,7 +165,7 @@ func (h *HTTPX) Probe(ctx context.Context, hosts []report.Host) (pipeline.Probe,
 		go func() {
 			defer wg.Done()
 			for i := range queue {
-				if ctx.Err() != nil || !h.limiter.Wait(ctx) {
+				if ctx.Err() != nil || !limiter.Wait(ctx) {
 					skip()
 					continue
 				}

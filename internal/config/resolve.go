@@ -18,6 +18,17 @@ import (
 // Load resolves a configuration from parsed flags, the environment and an
 // optional config file, then validates it.
 func Load(fs *pflag.FlagSet) (*Config, error) {
+	return resolveConfig(fs, true)
+}
+
+// LoadServe is Load for the HTTP handler, where the domain is not known at
+// startup: it arrives with each request and is validated then, by the same
+// rules.
+func LoadServe(fs *pflag.FlagSet) (*Config, error) {
+	return resolveConfig(fs, false)
+}
+
+func resolveConfig(fs *pflag.FlagSet, requireDomain bool) (*Config, error) {
 	l := &loader{fs: fs}
 
 	// The config file path itself can only come from a flag or the
@@ -107,7 +118,7 @@ func Load(fs *pflag.FlagSet) (*Config, error) {
 	}
 	l.warnUnknownKeys(cfg)
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.validate(requireDomain); err != nil {
 		return nil, err
 	}
 	return cfg, nil

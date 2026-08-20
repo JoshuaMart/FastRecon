@@ -6,6 +6,8 @@ import (
 	"net"
 	"strconv"
 	"sync"
+
+	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
 )
 
 // scanConnect performs a TCP connect scan.
@@ -14,7 +16,7 @@ import (
 // default: it is the only mode that works in a serverless job. A completed
 // handshake means the port is open; a refusal means it is closed; a timeout
 // means it is filtered, and only that case is worth retrying.
-func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports portSpec) (map[string][]int, error) {
+func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports portSpec, limiter *ratelimit.Limiter) (map[string][]int, error) {
 	list, err := s.expand(ports)
 	if err != nil {
 		return nil, err
@@ -50,7 +52,7 @@ func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports por
 				if ctx.Err() != nil {
 					return
 				}
-				if !s.limiter.Wait(ctx) {
+				if !limiter.Wait(ctx) {
 					return
 				}
 				if s.probe(ctx, t) {
