@@ -309,3 +309,24 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 		}
 	}
 }
+
+// The port is omitted when it is the scheme's default, so a scheme on an
+// unusual port — TLS answering on 80 — is the only kind that keeps one.
+func TestCanonicalURLOmitsTheDefaultPort(t *testing.T) {
+	cases := map[string]string{
+		"https|example.com|443": "https://example.com",
+		"http|example.com|80":   "http://example.com",
+		// Unusual, and worth seeing: the port survives.
+		"https|example.com|80":   "https://example.com:80",
+		"http|example.com|443":   "http://example.com:443",
+		"https|example.com|8443": "https://example.com:8443",
+		"http|example.com|8080":  "http://example.com:8080",
+	}
+	for in, want := range cases {
+		parts := strings.Split(in, "|")
+		port, _ := strconv.Atoi(parts[2])
+		if got := canonicalURL(parts[0], parts[1], port); got != want {
+			t.Errorf("canonicalURL(%s) = %q, want %q", in, got, want)
+		}
+	}
+}

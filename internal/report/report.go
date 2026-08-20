@@ -129,7 +129,12 @@ type Port struct {
 	Port     int    `json:"port"`
 	Protocol string `json:"protocol"`
 	State    string `json:"state"`
-	HTTP     *HTTP  `json:"http,omitempty"`
+	// Addresses are where this port was found open. An address is scanned
+	// once and its result mapped onto every host resolving to it, so without
+	// this a consumer cannot tell one service behind ten names from ten
+	// services — the two look identical in the host list.
+	Addresses []string `json:"addresses,omitempty"`
+	HTTP      *HTTP    `json:"http,omitempty"`
 }
 
 // HTTP describes the service answering on a port, with the scheme that

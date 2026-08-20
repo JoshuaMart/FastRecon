@@ -10,6 +10,13 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/stage"
 )
 
+// Flags that take a list come in two kinds, and the flag form must apply the
+// same rule as the environment form — otherwise the same value means two
+// different things depending on how it was supplied.
+//
+//	comma-splitting  sources, exclude-sources, resolvers   (pflag StringSlice)
+//	kept whole       exclude, probe-header, webhook-header (pflag StringArray)
+//
 // newlineOnlyFlags hold values that may legitimately contain a comma, so
 // their environment form is split on newlines only.
 var newlineOnlyFlags = map[string]bool{
@@ -37,12 +44,12 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.Float64("output-margin", 0.10, "fraction of the deadline reserved to build and deliver the report")
 
 	fs.String("provider-config", "", "path to the source credentials file (never baked into the image)")
-	fs.StringArray("sources", RequiredSources, "enumeration sources to query (repeatable); see `fastrecon sources`")
-	fs.StringArray("exclude-sources", nil, "sources to remove from the selection (repeatable)")
+	fs.StringSlice("sources", RequiredSources, "enumeration sources to query (repeatable); see `fastrecon sources`")
+	fs.StringSlice("exclude-sources", nil, "sources to remove from the selection (repeatable)")
 	fs.Bool("all-sources", false, "query every source the engine knows, not just the selection")
 	fs.Duration("source-timeout", 30*time.Second, "time ceiling for a single source, retries and backoff included; whole seconds only")
 
-	fs.StringArray("resolvers", nil, "DNS resolver IP to use (repeatable); empty uses the bundled set")
+	fs.StringSlice("resolvers", nil, "DNS resolver IP to use (repeatable); empty uses the bundled set")
 	fs.String("resolvers-file", "", "file of resolver IPs, one per line, # for comments")
 	fs.String("resolvers-url", "", "https URL of a resolver list, fetched at startup (30s ceiling); for deployments with no volume to mount")
 	fs.Bool("validate-resolvers", true, "drop resolvers that are unreachable, answer a known name wrongly, or hijack NXDOMAIN")
@@ -71,7 +78,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.StringArray("probe-header", nil, "extra header sent while probing, as 'Name: value' (repeatable)")
 
 	fs.StringP("output", "o", StdoutPath, "report destination: a file path, or - for stdout")
-	fs.String("format", "json", "report format: json, jsonl, text")
+	fs.String("format", "json", "report format: json, json-compact (one line, for log sinks), jsonl, text")
 	fs.String("webhook-url", "", "POST the report as raw JSON to this URL")
 	fs.String("webhook-method", "POST", "HTTP method for the webhook")
 	fs.StringArray("webhook-header", nil, "extra header for the webhook, as 'Name: value' (repeatable)")

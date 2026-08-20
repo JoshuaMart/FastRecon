@@ -48,7 +48,10 @@ scw jobs definition update <definition-id> \
 ```
 
 `FASTRECON_OUTPUT=""` turns off the stdout sink so the report exists only where
-it was sent. Leave it set to `-` to keep a copy in the logs as well.
+it was sent. Leave it set to `-` to keep a copy in the logs as well — and if you
+do, set `FASTRECON_FORMAT=json-compact`. The default indented format turns one
+report into hundreds of log lines (a 75-host run produced 1889), which the
+collector may reorder or drop; one line carries the same document intact.
 
 Stopping a job sends SIGTERM. FastRecon cancels the run, marks the report
 incomplete, and still delivers it: delivery runs on its own deadline, taken

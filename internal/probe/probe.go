@@ -250,7 +250,13 @@ func (h *HTTPX) probeOne(ctx context.Context, host string, port int) *report.HTT
 }
 
 func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) *report.HTTP {
+	// Connect to the explicit port, always; only the recorded URL is
+	// canonical. Rendering https://host:443 as https://host is not cosmetic:
+	// it makes a scheme on a non-default port — TLS answering on 80, say —
+	// the only kind that keeps its port, so the unusual case stands out
+	// instead of being lost among redundant ones.
 	target := scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port))
+	canonical := canonicalURL(scheme, host, port)
 
 	resp, err := h.do(ctx, h.client, target)
 	unfollowed := false
@@ -268,7 +274,7 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) *rep
 	}
 
 	svc := &report.HTTP{
-		URL:                target,
+		URL:                canonical,
 		Scheme:             scheme,
 		RedirectUnfollowed: unfollowed,
 		StatusCode:         resp.StatusCode,
@@ -285,7 +291,7 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) *rep
 	if scheme == "https" {
 		svc.TLS = certificate(resp)
 	}
-	if final := finalURL(resp); final != "" && final != target {
+	if final := finalURL(resp); final != "" && final != target && final != canonical {
 		svc.FinalURL = final
 	}
 	return svc
@@ -298,6 +304,14 @@ func (h *HTTPX) do(ctx context.Context, client *httpx.HTTPX, target string) (*ht
 		return nil, err
 	}
 	return client.Do(req, httpx.UnsafeOptions{})
+}
+
+// canonicalURL omits the port when it is the scheme's default.
+func canonicalURL(scheme, host string, port int) string {
+	if (scheme == "https" && port == 443) || (scheme == "http" && port == 80) {
+		return scheme + "://" + host
+	}
+	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // fingerprint identifies the technologies behind a response.

@@ -190,25 +190,33 @@ func (s *Scanner) attach(hosts []report.Host, byAddress map[string][]int, edges 
 		sort.Strings(addrs)
 
 		limited := false
-		seen := map[int]struct{}{}
+		// Which addresses each port was found on, so a port shared by several
+		// of a host's addresses records all of them.
+		sources := map[int][]string{}
 		var ports []int
 		for _, addr := range addrs {
 			if _, behind := edges[addr]; behind && s.opts.SkipCDN {
 				limited = true
 			}
 			for _, p := range open[addr] {
-				if _, dup := seen[p]; dup {
-					continue
+				if _, seen := sources[p]; !seen {
+					ports = append(ports, p)
 				}
-				seen[p] = struct{}{}
-				ports = append(ports, p)
+				sources[p] = append(sources[p], addr)
 			}
 		}
 		sort.Ints(ports)
 
 		out[i].Ports = make([]report.Port, 0, len(ports))
 		for _, p := range ports {
-			out[i].Ports = append(out[i].Ports, report.Port{Port: p, Protocol: "tcp", State: "open"})
+			found := sources[p]
+			sort.Strings(found)
+			out[i].Ports = append(out[i].Ports, report.Port{
+				Port:      p,
+				Protocol:  "tcp",
+				State:     "open",
+				Addresses: found,
+			})
 		}
 		if len(out[i].Ports) == 0 {
 			out[i].Ports = nil

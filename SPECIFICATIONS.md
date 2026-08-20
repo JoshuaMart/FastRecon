@@ -498,6 +498,10 @@ is executed.
 - Scanning targets resolved addresses, deduplicated: several subdomains pointing at the same
   address are scanned once and the result is mapped back onto every host sharing it. Ports
   found across a host's several addresses are merged and deduplicated.
+- **Each port records the addresses it was found open on.** Without that, one service behind
+  ten CNAMEs is indistinguishable from ten services: the report would show ten hosts each
+  apparently running their own copy, when a single address answers for all of them and the
+  port is not virtual-hosted. Observed on a real target, where ten names shared one address.
 
 ### 9.1 CDN and WAF determination
 
@@ -543,6 +547,10 @@ for origin addresses, ports 80 and 443 for the edges.
 - Collected per service: probed URL, scheme, status code, page title, content length,
   redirect chain, final URL, response time, server header, detected technologies, and — for
   TLS connections — subject CN, issuer, expiry and SANs.
+- **The URL omits the port when it is the scheme's default.** This is not cosmetic: it makes
+  a scheme on a non-default port the only kind that keeps its port, so an unusual finding —
+  TLS answering on port 80, observed in practice — stands out instead of being lost among
+  redundant `:443` suffixes. The connection always uses the explicit port regardless.
 - Tunables: concurrency, **rate limit**, request timeout, retries, follow-redirects toggle and
   hop limit, custom User-Agent and headers. The sweep is rate-limited like the port scan: an
   HTTP request costs a target far more than a TCP handshake, so if a ceiling belongs anywhere
@@ -701,8 +709,20 @@ The file sink writes atomically, except to destinations that are not regular fil
 `/dev/stdout`, `/dev/null` and named pipes cannot be replaced by a rename, and there is
 nothing to make atomic. Those are written through directly.
 
-Formats: `json` (single document, default), `jsonl` (one host per line, stream-friendly for
-large scopes), `text` (human-readable summary).
+Formats:
+
+| | |
+|---|---|
+| `json` | one indented document; the default, and what a human pipes into `jq` |
+| `json-compact` | the same document on **one line** |
+| `jsonl` | one host per line, stream-friendly for large scopes |
+| `text` | human-readable summary |
+
+`json-compact` exists for log sinks. A serverless job's report reaches its reader as log
+lines, and an indented document becomes hundreds of them — a real run of 75 hosts produced
+1889 — which a collector may reorder or drop, leaving reassembly to guesswork. `jsonl` also
+fixes the line count but drops the run metadata, the per-source accounting and the warnings,
+since it emits only hosts. One line keeps everything.
 
 ### 13.2 Report shape (indicative)
 
