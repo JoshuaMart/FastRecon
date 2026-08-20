@@ -21,6 +21,7 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/logging"
 	"github.com/JoshuaMart/FastRecon/internal/pipeline"
 	"github.com/JoshuaMart/FastRecon/internal/portscan"
+	"github.com/JoshuaMart/FastRecon/internal/probe"
 	"github.com/JoshuaMart/FastRecon/internal/resolve"
 	"github.com/JoshuaMart/FastRecon/internal/secrets"
 	"github.com/JoshuaMart/FastRecon/internal/sink"
@@ -251,6 +252,23 @@ func buildStages(ctx context.Context, cfg *config.Config, log *slog.Logger) (pip
 			return pipeline.Stages{}, err
 		}
 		stages.PortScanner = scanner
+	}
+
+	if cfg.Scope.Includes(stage.HTTPProbe) {
+		prober, err := probe.New(probe.Options{
+			Concurrency:     cfg.ProbeConcurrency,
+			Timeout:         cfg.ProbeTimeout,
+			Retries:         cfg.ProbeRetries,
+			FollowRedirects: cfg.ProbeFollowRedirects,
+			MaxRedirects:    cfg.ProbeMaxRedirects,
+			UserAgent:       cfg.ProbeUserAgent,
+			Headers:         cfg.ProbeHeaders,
+			Logger:          log,
+		})
+		if err != nil {
+			return pipeline.Stages{}, err
+		}
+		stages.Prober = prober
 	}
 
 	return stages, nil

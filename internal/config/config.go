@@ -69,6 +69,7 @@ type Config struct {
 
 	// HTTP probe
 	ProbeConcurrency     int
+	ProbeRetries         int
 	ProbeTimeout         time.Duration
 	ProbeFollowRedirects bool
 	ProbeMaxRedirects    int

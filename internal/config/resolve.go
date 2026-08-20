@@ -68,6 +68,7 @@ func Load(fs *pflag.FlagSet) (*Config, error) {
 
 	cfg.ProbeConcurrency = l.int("probe-concurrency")
 	cfg.ProbeTimeout = l.dur("probe-timeout")
+	cfg.ProbeRetries = l.int("probe-retries")
 	cfg.ProbeFollowRedirects = l.bool("probe-follow-redirects")
 	cfg.ProbeMaxRedirects = l.int("probe-max-redirects")
 	cfg.ProbeUserAgent = l.str("probe-user-agent")

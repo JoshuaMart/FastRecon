@@ -10,7 +10,8 @@ first; this file is only the quick start.
 
 ## Status
 
-Phase 4 of 8. `--stages enum`, `resolve` and `ports` are fully usable:
+Phase 5 of 8. The whole pipeline runs: `--stages enum`, `resolve`, `ports`
+and `full`.
 
 - passive subdomain enumeration from multiple sources, with per-source
   accounting in the report,
@@ -22,6 +23,8 @@ Phase 4 of 8. `--stages enum`, `resolve` and `ports` are fully usable:
 - unprivileged TCP connect port scanning, rate-limited, with CDN and WAF
   determination so a narrowed port list is never mistaken for an exhaustive
   one,
+- HTTP probing of the discovered ports, HTTPS-first so the recorded scheme is
+  the one that actually worked, with titles, technologies and certificates,
 - the CLI, with the full option surface and its precedence rules
   (flag > environment > config file > default),
 - the run report model and its `json` / `jsonl` / `text` renderings,
@@ -30,7 +33,8 @@ Phase 4 of 8. `--stages enum`, `resolve` and `ports` are fully usable:
   handling, and exit codes,
 - the container image and CI.
 
-HTTP probing lands in phase 5. Asking for a
+What is left is the webhook sink and hardening (phase 6), then the Scaleway
+job and function deployments (phases 7–8). Asking for a
 wider scope walks the ladder as far as it can, then reports the stage that has
 no implementation and exits 2 — it does not pretend to have found nothing.
 
@@ -55,6 +59,9 @@ make build
 
 # Enumerate, resolve, then scan the web ports of the live hosts.
 ./bin/fastrecon -d example.com --stages ports --ports web --format text
+
+# The whole pipeline, ending with HTTP service detection.
+./bin/fastrecon -d example.com --stages full --format text
 ```
 
 The default resolver pool is small and deliberate: Cloudflare, Google and

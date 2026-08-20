@@ -64,6 +64,7 @@ func (c *Config) Validate() error {
 	}{
 		{"resolver-retries", c.ResolverRetries},
 		{"probe-max-redirects", c.ProbeMaxRedirects},
+		{"probe-retries", c.ProbeRetries},
 		{"webhook-retries", c.WebhookRetries},
 		{"scan-rate", c.ScanRate},
 		{"scan-retries", c.ScanRetries},

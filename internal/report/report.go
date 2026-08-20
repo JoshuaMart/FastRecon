@@ -135,7 +135,11 @@ type Port struct {
 // HTTP describes the service answering on a port, with the scheme that
 // actually worked rather than one assumed from the port number.
 type HTTP struct {
-	URL           string   `json:"url"`
+	// URL is the URL that was probed. It always matches Scheme and the port,
+	// so it identifies this service rather than wherever it redirects to.
+	URL string `json:"url"`
+	// FinalURL is where the redirects landed, when they went anywhere else.
+	FinalURL      string   `json:"final_url,omitempty"`
 	Scheme        string   `json:"scheme"`
 	StatusCode    int      `json:"status_code"`
 	Title         string   `json:"title,omitempty"`
@@ -143,8 +147,12 @@ type HTTP struct {
 	ResponseTime  int64    `json:"response_time_ms,omitempty"`
 	Server        string   `json:"server,omitempty"`
 	Redirects     []string `json:"redirects,omitempty"`
-	Tech          []string `json:"tech,omitempty"`
-	TLS           *TLS     `json:"tls,omitempty"`
+	// RedirectUnfollowed marks a service whose redirect target could not be
+	// reached. The response recorded here is the first hop, which is a real
+	// finding even though the chain is broken.
+	RedirectUnfollowed bool     `json:"redirect_unfollowed,omitempty"`
+	Tech               []string `json:"tech,omitempty"`
+	TLS                *TLS     `json:"tls,omitempty"`
 }
 
 // TLS is the certificate seen on an HTTPS service. SANs may name hosts the

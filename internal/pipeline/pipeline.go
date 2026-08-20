@@ -83,10 +83,17 @@ type PortScanner interface {
 	Scan(ctx context.Context, hosts []report.Host) (PortScan, error)
 }
 
+// Probe is what a Prober produces: the hosts, with the open ports that
+// answered HTTP carrying their service details.
+type Probe struct {
+	Partial
+	Hosts []report.Host
+}
+
 // Prober enriches open ports with the HTTP service behind them.
 type Prober interface {
 	Name() string
-	Probe(ctx context.Context, hosts []report.Host) ([]report.Host, error)
+	Probe(ctx context.Context, hosts []report.Host) (Probe, error)
 }
 
 // Stages holds the implementations wired into a run. A nil field means the
@@ -274,12 +281,13 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		if p.stages.Prober == nil {
 			return ErrNoImplementation
 		}
-		hosts, err := p.stages.Prober.Probe(ctx, state.found)
+		res, err := p.stages.Prober.Probe(ctx, state.found)
 		if err != nil {
 			return err
 		}
-		state.found = hosts
-		rep.Hosts = hosts
+		state.found = res.Hosts
+		rep.Hosts = res.Hosts
+		p.applyPartial(rep, st, res.Partial)
 		return nil
 
 	default:

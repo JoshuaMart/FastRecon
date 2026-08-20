@@ -471,17 +471,46 @@ for origin addresses, ports 80 and 443 for the edges.
 
 ## 10. Stage 5 — HTTP probing
 
-- Engine: **`httpx` as a Go library**, run against the *discovered open ports only* — not a
-  fixed 80/443 assumption.
-- Scheme detection: each `host:port` is tried in the appropriate order and the working scheme
-  is recorded, so `https` on 8080 and `http` on 8443 are both reported correctly.
-- Collected per service: final URL, scheme, status code, page title, content length,
-  redirect chain, response time, TLS subject/SAN/issuer/expiry, detected technologies,
-  and the server header.
-- Tunables: concurrency, request timeout, follow-redirects toggle and hop limit, custom
-  User-Agent and headers, max response size.
+- Engine: **httpx's client**, used at the request level rather than through its CLI runner.
+  The runner calls `gologger.Fatal` — and therefore `os.Exit` — on several ordinary paths,
+  including "no input provided", and its enumeration entry point takes no context, so a run
+  could neither be cancelled nor survive a bad input. Technology detection uses
+  `wappalyzergo` directly.
+- Probing targets the **discovered open ports only**. Assuming 80 and 443 would report
+  services that were never observed and miss the ones on unusual ports, which is the entire
+  reason the scan runs first.
+- Collected per service: probed URL, scheme, status code, page title, content length,
+  redirect chain, final URL, response time, server header, detected technologies, and — for
+  TLS connections — subject CN, issuer, expiry and SANs.
+- Tunables: concurrency, request timeout, retries, follow-redirects toggle and hop limit,
+  custom User-Agent and headers.
 - TLS SANs discovered here may reveal additional hostnames; v1 **records** them in the report
   but does not feed them back into the pipeline. (Candidate for v2: a re-enumeration loop.)
+
+### 10.1 Scheme detection
+
+**HTTPS is tried first on every port**, with plain HTTP as the fallback. There is no
+port-number heuristic, because the TLS handshake is the only reliable discriminator.
+
+Trying HTTP first would misclassify TLS ports: a plain request to an HTTPS port commonly
+returns a genuine HTTP `400 The plain HTTP request was sent to HTTPS port`, which is
+indistinguishable from a working HTTP service. A handshake, by contrast, either succeeds or
+fails. The cost is one fast-failing handshake on plain ports, which is worth one rule with no
+exceptions to get wrong.
+
+Three consequences the report makes explicit:
+
+- **`url` always matches the probed scheme and port.** Where the redirects landed goes in
+  `final_url`. Overwriting `url` with the redirect target produced records reading
+  `"scheme": "http"` alongside `"url": "https://…"`, which is not a description of anything.
+- **A certificate is recorded only for a connection that was itself TLS.** A plain-HTTP probe
+  that follows a redirect to an HTTPS host would otherwise attach that other endpoint's
+  certificate to this port.
+- **A broken redirect chain still reports its first hop**, marked `redirect_unfollowed`. A
+  port answering `301` toward a host whose handshake fails is a finding; failing the whole
+  request would report the port as having no service at all. Observed in practice on a
+  Cloudflare DNS address: port 80 answers `301` to an HTTPS endpoint that refuses the
+  handshake.
 
 ## 11. Configuration
 
@@ -526,6 +555,7 @@ Optional YAML, selected by `--config` / `FASTRECON_CONFIG`. Never read from an i
 | `--resolver-health-budget` | `FASTRECON_RESOLVER_HEALTH_BUDGET` | `30s` | ceiling on the health check |
 | `--wildcard-probes` | `FASTRECON_WILDCARD_PROBES` | `3` | random names probed per parent domain |
 | `--scan-retries` | `FASTRECON_SCAN_RETRIES` | `2` | retries per port |
+| `--probe-retries` | `FASTRECON_PROBE_RETRIES` | `1` | retries per HTTP probe |
 | `--listen` (serve) | `FASTRECON_LISTEN` | `:8080` | HTTP bind address in function mode |
 | `--api-token` (serve) | `FASTRECON_API_TOKEN` | — | shared token required by the handler |
 
