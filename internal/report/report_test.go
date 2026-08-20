@@ -23,6 +23,7 @@ func sample(t *testing.T) *Report {
 			Host:      "api.example.com",
 			Status:    StatusLive,
 			Addresses: []string{"93.184.216.34"},
+			CDN:       []CDN{{Name: "cloudflare", Type: "waf", Addresses: []string{"93.184.216.34"}, ScanLimited: true}},
 			Ports: []Port{
 				{Port: 443, Protocol: "tcp", State: "open", HTTP: &HTTP{URL: "https://api.example.com", Scheme: "https", StatusCode: 200}},
 				{Port: 22, Protocol: "tcp", State: "open"},
@@ -71,6 +72,24 @@ func TestRenderJSONRoundTrips(t *testing.T) {
 	}
 	if back.Hosts[0].Ports[0].HTTP.Scheme != "https" {
 		t.Error("the working scheme must survive a round trip")
+	}
+	if len(back.Hosts[0].CDN) != 1 || !back.Hosts[0].CDN[0].ScanLimited {
+		t.Error("the CDN determination and its scan_limited marker must survive a round trip")
+	}
+}
+
+// A port list narrowed to the web ports must never read as an exhaustive scan.
+func TestRenderTextMarksNarrowedCDNScans(t *testing.T) {
+	out, err := sample(t).Render(FormatText)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "cdn:cloudflare") {
+		t.Error("the CDN provider is missing from the text output")
+	}
+	if !strings.Contains(s, "ports-limited") {
+		t.Error("a deliberately narrowed port list must be marked in the text output")
 	}
 }
 

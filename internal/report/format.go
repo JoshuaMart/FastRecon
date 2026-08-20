@@ -158,7 +158,7 @@ func hostDetail(h Host) string {
 	case h.Status == StatusDead:
 		return h.Reason
 	case len(h.Ports) > 0:
-		parts := make([]string, 0, len(h.Ports))
+		parts := make([]string, 0, len(h.Ports)+1)
 		for _, p := range h.Ports {
 			if p.HTTP != nil {
 				parts = append(parts, fmt.Sprintf("%d/%s(%d)", p.Port, p.HTTP.Scheme, p.HTTP.StatusCode))
@@ -166,10 +166,30 @@ func hostDetail(h Host) string {
 			}
 			parts = append(parts, fmt.Sprintf("%d", p.Port))
 		}
+		if cdn := cdnDetail(h.CDN); cdn != "" {
+			parts = append(parts, cdn)
+		}
 		return strings.Join(parts, " ")
 	default:
-		return strings.Join(h.Addresses, " ")
+		return strings.TrimSpace(strings.Join(h.Addresses, " ") + " " + cdnDetail(h.CDN))
 	}
+}
+
+// cdnDetail renders the CDN providers behind a host, marking a port list that
+// was deliberately narrowed so it is not read as an exhaustive scan.
+func cdnDetail(cdns []CDN) string {
+	if len(cdns) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(cdns))
+	for _, c := range cdns {
+		name := c.Name
+		if c.ScanLimited {
+			name += ",ports-limited"
+		}
+		parts = append(parts, name)
+	}
+	return "[cdn:" + strings.Join(parts, " ") + "]"
 }
 
 func formatMillis(ms int64) string {

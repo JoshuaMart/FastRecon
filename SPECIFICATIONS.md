@@ -315,8 +315,33 @@ Dead hosts stay in the report — a dangling CNAME is a finding, not noise.
 - Tunables: concurrency, rate limit, connect timeout, retries, per-host and global caps.
 - Scanning targets resolved IPs, deduplicated: several subdomains pointing at the same IP are
   scanned once and the results are mapped back onto every host sharing that IP.
-- `--skip-cdn` (default on) avoids scanning IPs belonging to known CDN/WAF ranges beyond the
-  standard web ports — scanning a CDN edge produces meaningless results and burns time.
+
+### 9.1 CDN and WAF determination
+
+Before a single port is touched, every target address is checked against the known CDN, WAF
+and cloud-provider ranges. This is a **determination step, not a filter**: it runs on every
+run, and its outcome is recorded whether or not it changes what gets scanned.
+
+naabu exposes the two halves separately, and FastRecon uses both:
+
+| naabu option | Role | Governed by |
+|---|---|---|
+| `-exclude-cdn` | restrict CDN/WAF addresses to ports 80 and 443 | `--skip-cdn` (default on) |
+| `-display-cdn` | report which provider was matched | always on |
+
+- **Why restrict.** A CDN edge answers for thousands of unrelated customers. Its open ports
+  describe the provider's infrastructure, not the target's attack surface, so scanning the
+  full range burns the budget on results that mean nothing — and looks, from the provider's
+  side, like an attack on their edge.
+- **Why record it regardless.** "Only 80 and 443 are open" is indistinguishable from a
+  genuinely minimal host unless the report states that the scan was deliberately narrowed.
+  Every host behind a CDN therefore carries the provider name and a `scan_limited` marker, so
+  no consumer mistakes a truncated port list for an exhaustive one.
+- `--skip-cdn=false` scans CDN addresses in full. Detection still runs and the provider is
+  still recorded; only the restriction is lifted.
+- Detection is recorded per provider, each entry naming the addresses it matched, so a host
+  with both a CDN address and an origin address shows which is which. The restriction applies
+  to the matched addresses only.
 
 ## 10. Stage 5 — HTTP probing
 
@@ -452,6 +477,7 @@ large scopes), `text` (human-readable summary).
       "status": "live",
       "addresses": ["93.184.216.34"],
       "cname": ["edge.example.net"],
+      "cdn": [{"name": "cloudflare", "type": "waf", "addresses": ["93.184.216.34"], "scan_limited": true}],
       "ports": [
         {"port": 443, "protocol": "tcp", "state": "open",
          "http": {

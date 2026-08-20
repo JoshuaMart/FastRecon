@@ -39,7 +39,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.String("scan-mode", ScanModeConnect, fmt.Sprintf("port scan mode: %s (unprivileged) or %s (needs CAP_NET_RAW)", ScanModeConnect, ScanModeSYN))
 	fs.String("ports", "top-100", "ports to scan: top-100, top-1000, web, or a list like 80,443,8000-8100")
 	fs.String("exclude-ports", "", "ports to subtract from the selection")
-	fs.Bool("skip-cdn", true, "on CDN/WAF addresses, scan only the standard web ports")
+	fs.Bool("skip-cdn", true, "on CDN/WAF addresses, scan only the standard web ports; detection runs and is reported either way")
 	fs.Int("scan-concurrency", 200, "concurrent port connections")
 	fs.Int("scan-rate", 1000, "port scan packets per second")
 	fs.Duration("scan-timeout", 3*time.Second, "timeout per port connection")

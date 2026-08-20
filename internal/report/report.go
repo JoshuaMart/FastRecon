@@ -99,7 +99,24 @@ type Host struct {
 	Addresses []string `json:"addresses,omitempty"`
 	CNAME     []string `json:"cname,omitempty"`
 	Reason    string   `json:"reason,omitempty"`
+	CDN       []CDN    `json:"cdn,omitempty"`
 	Ports     []Port   `json:"ports,omitempty"`
+}
+
+// CDN records that some of a host's addresses sit behind a CDN, WAF or cloud
+// edge. It is populated whether or not the scan was restricted: a port list
+// narrowed to 80 and 443 is indistinguishable from a genuinely minimal host
+// unless the report says the narrowing was deliberate.
+type CDN struct {
+	Name string `json:"name"`
+	// Type is the kind of provider matched: cdn, waf or cloud.
+	Type string `json:"type,omitempty"`
+	// Addresses are the host addresses this provider matched. A host can have
+	// a CDN address and an origin address at once.
+	Addresses []string `json:"addresses,omitempty"`
+	// ScanLimited marks a port list restricted to the standard web ports
+	// because of this provider.
+	ScanLimited bool `json:"scan_limited"`
 }
 
 // Port is an open port on a host, with the HTTP service behind it if any.
