@@ -55,6 +55,9 @@ jobs:
 
       # The published image is built from this repository, so a credential
       # committed here is a credential shipped. A hit fails the build.
+      # The scan covers the full history, and .gitleaks.toml carries the
+      # exemptions for known-fake test fixtures — one literal at a time, never
+      # a path-wide hole.
       - name: gitleaks
         run: |
           docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \

@@ -1,0 +1,24 @@
+title = "FastRecon"
+
+# Start from the shipped rules; this file only ever subtracts from them.
+[extend]
+useDefault = true
+
+# Known-fake values used as test fixtures.
+#
+# The scan covers the whole history, so annotating the current line would not
+# clear a finding recorded against an earlier commit — the exemption has to
+# live here.
+#
+# Entries are listed one literal at a time, on purpose. A path-wide exemption
+# for test files would be a hole: a test file can hold a real credential just
+# as easily as any other, and the point of this scan is that the published
+# image is built from this repository.
+[[allowlists]]
+description = "Fixture credential in the redaction tests, which need a value shaped like a real key to be worth anything"
+regexTargets = ["secret"]
+regexes = [
+  # internal/secrets/secrets_test.go — asserts the redactor scrubs a key out
+  # of a request URL, the way c99 sends one.
+  '''^abcdef1234567890$''',
+]
