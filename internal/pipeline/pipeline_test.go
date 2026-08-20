@@ -120,8 +120,15 @@ func TestRunEnumScopeStopsBeforeResolving(t *testing.T) {
 	if rep.Stats.Enumerated != 2 || rep.Stats.Excluded != 1 || rep.Stats.InScope != 1 {
 		t.Errorf("stats = %+v, want 2 enumerated / 1 excluded / 1 in scope", rep.Stats)
 	}
-	if len(rep.Hosts) != 0 {
-		t.Errorf("hosts = %v, want none: the enum scope performs no resolution", rep.Hosts)
+	// An enumeration-only run must still carry the hosts it found.
+	if len(rep.Hosts) != 1 || rep.Hosts[0].Host != "a.example.com" {
+		t.Errorf("hosts = %v, want the surviving host listed", rep.Hosts)
+	}
+	if rep.Hosts[0].Status != report.StatusDiscovered {
+		t.Errorf("status = %q, want %q: nothing was resolved at this scope", rep.Hosts[0].Status, report.StatusDiscovered)
+	}
+	if rep.Stats.Live != 0 || rep.Stats.Dead != 0 {
+		t.Error("a discovered host must not count as live or dead")
 	}
 	if len(rep.Sources) != 1 {
 		t.Errorf("sources = %v, want the source accounting to reach the report", rep.Sources)

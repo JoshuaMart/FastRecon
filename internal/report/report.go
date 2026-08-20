@@ -15,15 +15,20 @@ const SchemaVersion = "1.0"
 
 // Host status values.
 const (
-	StatusLive     = "live"
-	StatusDead     = "dead"
-	StatusWildcard = "wildcard"
+	// StatusDiscovered is a host found by enumeration and kept by the
+	// exclusion filter, but not yet resolved. It is what every host in an
+	// enumeration-only run looks like.
+	StatusDiscovered = "discovered"
+	StatusLive       = "live"
+	StatusDead       = "dead"
+	StatusWildcard   = "wildcard"
 )
 
 // Source status values.
 const (
 	SourceOK           = "ok"
 	SourceSkippedNoKey = "skipped_no_key"
+	SourceSkipped      = "skipped"
 	SourceError        = "error"
 	SourceTimeout      = "timeout"
 	SourceRateLimited  = "rate_limited"

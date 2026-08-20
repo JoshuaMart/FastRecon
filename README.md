@@ -10,8 +10,12 @@ first; this file is only the quick start.
 
 ## Status
 
-Phase 1 of 8 — the skeleton. What works today:
+Phase 2 of 8. `--stages enum` is fully usable:
 
+- passive subdomain enumeration from multiple sources, with per-source
+  accounting in the report,
+- exclusion patterns — exact, wildcard and regex — applied before any network
+  activity touches a host,
 - the CLI, with the full option surface and its precedence rules
   (flag > environment > config file > default),
 - the run report model and its `json` / `jsonl` / `text` renderings,
@@ -20,15 +24,22 @@ Phase 1 of 8 — the skeleton. What works today:
   handling, and exit codes,
 - the container image and CI.
 
-The recon stages themselves land in phases 2–5. Until then a run walks the
-ladder, reports that the enumeration stage has no implementation, and exits 2 —
-it does not pretend to have found nothing.
+Resolution, port scanning and HTTP probing land in phases 3–5. Asking for a
+wider scope walks the ladder as far as it can, then reports the stage that has
+no implementation and exits 2 — it does not pretend to have found nothing.
 
 ## Quick start
 
 ```sh
 make build
 ./bin/fastrecon -d example.com --stages enum
+
+# With exclusions, as text.
+./bin/fastrecon -d example.com --stages enum --format text \
+  --exclude '*.dev.example.com' --exclude 're:^staging[0-9]*\.'
+
+# Which sources exist, and which need a key.
+./bin/fastrecon sources
 ```
 
 ```sh
@@ -62,10 +73,24 @@ fastrecon -d example.com --stages full     # + HTTP probe (default)
 
 ## Credentials
 
-API keys are never baked into the image. Provide them at runtime as
-environment variables (`CHAOS_API_KEY`, `SECURITYTRAILS_API_KEY`, `C99_API_KEY`,
-or the namespaced `FASTRECON_KEY_*` form), or as a provider config file mounted
-into the container and pointed at with `--provider-config`.
+API keys are never baked into the image. Provide them at runtime, in this order
+of precedence:
+
+1. `FASTRECON_KEY_<SOURCE>` — the namespaced environment variable,
+2. `<SOURCE>_API_KEY` — the upstream spelling (`CHAOS_API_KEY`, …),
+3. a provider config file mounted into the container, pointed at with
+   `--provider-config` (subfinder/subfaster format),
+4. `FASTRECON_KEY_<SOURCE>_FILE` — a path to a file holding the key, for
+   Docker and Kubernetes secret mounts.
+
+The default sources are `chaos`, `securitytrails`, `c99` (all key-required),
+plus `submd` and `crt` which work without one. A run with no credentials at all
+still returns data from the last two; the others are reported as
+`skipped_no_key` rather than silently dropped.
+
+Credential values never appear in the logs or the report. Error messages are
+scrubbed, including request URLs — some sources put the key in the query
+string.
 
 ## Exit codes
 

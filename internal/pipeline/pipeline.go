@@ -23,6 +23,9 @@ import (
 type Enumeration struct {
 	Hosts   []string
 	Sources []report.Source
+	// Warnings are non-fatal problems worth putting in the report — a source
+	// that failed or was throttled degrades a run without ending it.
+	Warnings []string
 }
 
 // Filtered is the outcome of applying the exclusion patterns.
@@ -192,6 +195,9 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		state.hosts = res.Hosts
 		rep.Sources = res.Sources
 		rep.Stats.Enumerated = len(res.Hosts)
+		for _, w := range res.Warnings {
+			rep.Warnf("%s", w)
+		}
 		return nil
 
 	case stage.Exclude:
@@ -202,6 +208,13 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		state.hosts = res.Kept
 		rep.Stats.Excluded = len(res.Removed)
 		rep.Stats.InScope = len(res.Kept)
+		// Publish the surviving hosts now, so an enumeration-only run
+		// reports the subdomains it found rather than just counting them.
+		// The resolve stage replaces these with their live/dead verdict.
+		rep.Hosts = make([]report.Host, 0, len(res.Kept))
+		for _, h := range res.Kept {
+			rep.Hosts = append(rep.Hosts, report.Host{Host: h, Status: report.StatusDiscovered})
+		}
 		if p.cfg.ReportExcluded {
 			rep.Excluded = res.Removed
 		}

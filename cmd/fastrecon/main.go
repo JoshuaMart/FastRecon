@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,8 +16,11 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/JoshuaMart/FastRecon/internal/config"
+	"github.com/JoshuaMart/FastRecon/internal/enumerate"
+	"github.com/JoshuaMart/FastRecon/internal/exclude"
 	"github.com/JoshuaMart/FastRecon/internal/logging"
 	"github.com/JoshuaMart/FastRecon/internal/pipeline"
+	"github.com/JoshuaMart/FastRecon/internal/secrets"
 	"github.com/JoshuaMart/FastRecon/internal/sink"
 	"github.com/JoshuaMart/FastRecon/internal/version"
 )
@@ -46,6 +50,9 @@ func dispatch(args []string) int {
 			return exitUsage
 		case "run":
 			args = args[1:]
+		case "sources":
+			listSources()
+			return exitOK
 		case "help":
 			usage(newFlagSet())
 			return exitOK
@@ -68,6 +75,7 @@ func usage(fs *pflag.FlagSet) {
 Usage:
   fastrecon [run] -d <domain> [options]
   fastrecon serve [options]
+  fastrecon sources
   fastrecon version
 
 Every option below is also settable as an environment variable (--http-timeout
@@ -125,9 +133,13 @@ func run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Stage implementations land in the following phases; until then the
-	// pipeline reports the ladder stopping instead of inventing results.
-	rep, err := pipeline.New(cfg, pipeline.Stages{}, log).Run(ctx)
+	stages, err := buildStages(cfg, log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
+		return exitUsage
+	}
+
+	rep, err := pipeline.New(cfg, stages, log).Run(ctx)
 	if err != nil {
 		log.Error("run failed", "error", err)
 		return exitFatal
@@ -156,6 +168,69 @@ func run(args []string) int {
 		return exitIncomplete
 	default:
 		return exitOK
+	}
+}
+
+// buildStages wires the stage implementations available in this build. The
+// stages beyond exclusion land in later phases; the pipeline reports the
+// ladder stopping rather than inventing an empty result.
+func buildStages(cfg *config.Config, log *slog.Logger) (pipeline.Stages, error) {
+	resolver, err := secrets.NewResolver(cfg.ProviderConfig)
+	if err != nil {
+		return pipeline.Stages{}, err
+	}
+
+	wanted := cfg.Sources
+	if cfg.AllSources {
+		for _, s := range enumerate.Available() {
+			wanted = append(wanted, s.Name)
+		}
+	}
+	creds := resolver.Resolve(wanted)
+	logCredentials(log, cfg.Sources, creds)
+
+	enumerator, err := enumerate.NewSubfaster(enumerate.Options{
+		Sources:        cfg.Sources,
+		ExcludeSources: cfg.ExcludeSources,
+		All:            cfg.AllSources,
+		SourceTimeout:  cfg.SourceTimeout,
+		Credentials:    creds,
+		Redactor:       secrets.NewRedactor(creds),
+		Logger:         log,
+	})
+	if err != nil {
+		return pipeline.Stages{}, err
+	}
+
+	excluder, err := exclude.New(cfg.Exclude, cfg.ExcludeStrictWildcard)
+	if err != nil {
+		return pipeline.Stages{}, fmt.Errorf("invalid exclusions:\n%w", err)
+	}
+
+	return pipeline.Stages{Enumerator: enumerator, Excluder: excluder}, nil
+}
+
+// logCredentials reports which sources have a key and where it came from.
+// Values are never logged, not even truncated.
+func logCredentials(log *slog.Logger, sources []string, creds map[string]secrets.Credential) {
+	inv := secrets.Take(sources, creds)
+	for source, origin := range inv.Configured {
+		log.Debug("source credential", "source", source, "origin", origin)
+	}
+	log.Info("credentials resolved",
+		"configured", len(inv.Configured),
+		"missing", inv.Missing,
+	)
+}
+
+func listSources() {
+	fmt.Printf("%-18s %-10s %s\n", "SOURCE", "KEY", "DEFAULT")
+	for _, s := range enumerate.Available() {
+		def := ""
+		if s.Default {
+			def = "yes"
+		}
+		fmt.Printf("%-18s %-10s %s\n", s.Name, s.Key, def)
 	}
 }
 

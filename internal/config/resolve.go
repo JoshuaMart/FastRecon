@@ -42,6 +42,10 @@ func Load(fs *pflag.FlagSet) (*Config, error) {
 
 	cfg.Enumerator = l.str("enumerator")
 	cfg.ProviderConfig = l.str("provider-config")
+	cfg.Sources = l.strs("sources")
+	cfg.ExcludeSources = l.strs("exclude-sources")
+	cfg.AllSources = l.bool("all-sources")
+	cfg.SourceTimeout = l.dur("source-timeout")
 
 	cfg.Resolvers = l.strs("resolvers")
 	cfg.ResolverConcurrency = l.int("resolver-concurrency")
@@ -87,12 +91,6 @@ func Load(fs *pflag.FlagSet) (*Config, error) {
 	} else {
 		cfg.Format = format
 	}
-	if a, err := ParseAllowance(l.str("source-retry-budget")); err != nil {
-		l.errs = append(l.errs, fmt.Errorf("source-retry-budget: %w", err))
-	} else {
-		cfg.SourceRetryBudget = a
-	}
-
 	if err := errors.Join(l.errs...); err != nil {
 		return nil, err
 	}

@@ -12,8 +12,6 @@ package config
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/JoshuaMart/FastRecon/internal/report"
@@ -41,9 +39,12 @@ type Config struct {
 	OutputMargin float64
 
 	// Enumeration
-	Enumerator        string
-	ProviderConfig    string
-	SourceRetryBudget Allowance
+	Enumerator     string
+	ProviderConfig string
+	Sources        []string
+	ExcludeSources []string
+	AllSources     bool
+	SourceTimeout  time.Duration
 
 	// Resolution
 	Resolvers           []string
@@ -92,6 +93,17 @@ type Config struct {
 	Warnings []string
 }
 
+// RequiredSources is the default source selection: the sources a run is
+// expected to use. The keyed ones report themselves as skipped when no
+// credential is configured, rather than being silently dropped.
+//
+//	chaos           ProjectDiscovery Chaos   key required
+//	securitytrails  SecurityTrails           key required
+//	c99             c99.nl                   key required
+//	submd           sub.md                   key optional
+//	crt             crt.name                 key optional
+var RequiredSources = []string{"chaos", "securitytrails", "c99", "submd", "crt"}
+
 // Scan modes.
 const (
 	ScanModeConnect = "connect"
@@ -100,54 +112,6 @@ const (
 
 // StdoutPath is the Output value that selects the stdout sink.
 const StdoutPath = "-"
-
-// Allowance is a budget expressed either as a fraction of a larger budget
-// ("25%") or as an absolute duration ("90s").
-type Allowance struct {
-	Percent  float64
-	Duration time.Duration
-}
-
-// ParseAllowance reads "25%" or a Go duration.
-func ParseAllowance(s string) (Allowance, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return Allowance{}, fmt.Errorf("empty allowance")
-	}
-	if pct, ok := strings.CutSuffix(s, "%"); ok {
-		v, err := strconv.ParseFloat(strings.TrimSpace(pct), 64)
-		if err != nil {
-			return Allowance{}, fmt.Errorf("invalid percentage %q", s)
-		}
-		if v <= 0 || v > 100 {
-			return Allowance{}, fmt.Errorf("percentage %q out of range (0, 100]", s)
-		}
-		return Allowance{Percent: v / 100}, nil
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return Allowance{}, fmt.Errorf("invalid allowance %q: want a percentage or a duration", s)
-	}
-	if d <= 0 {
-		return Allowance{}, fmt.Errorf("allowance %q must be positive", s)
-	}
-	return Allowance{Duration: d}, nil
-}
-
-// Of resolves the allowance against a total budget.
-func (a Allowance) Of(total time.Duration) time.Duration {
-	if a.Duration > 0 {
-		return min(a.Duration, total)
-	}
-	return time.Duration(float64(total) * a.Percent)
-}
-
-func (a Allowance) String() string {
-	if a.Duration > 0 {
-		return a.Duration.String()
-	}
-	return strconv.FormatFloat(a.Percent*100, 'f', -1, 64) + "%"
-}
 
 // Sinks reports which destinations are configured.
 func (c *Config) Sinks() (stdout, file, webhook bool) {

@@ -194,7 +194,13 @@ It is a fork of ProjectDiscovery's subfinder, so it keeps subfinder's provider-c
 format while shipping fast keyless sources (`submd`, `crt`, `thc`, `rapiddns`, `hackertarget`,
 `shodanct`, `sitedossier`) and the full keyed source set behind its "all sources" mode.
 
-The enumeration engine sits behind an interface:
+Only the library's **passive agent** is used, not its CLI runner. The runner reads a provider
+config from the user's home directory when none is given, and a container run must not depend
+on what happens to be in `$HOME` — nor attempt that read on a read-only filesystem. Driving the
+agent directly also removes the runner's resolver initialisation and update check, neither of
+which this stage needs.
+
+The engine sits behind an interface:
 
 ```go
 type Enumerator interface {
@@ -211,15 +217,22 @@ touching the rest of the pipeline. v1 ships the subfaster-backed implementation;
 
 These must be supported and enabled by default when credentials are present:
 
-| Source | Key required | Notes |
-|---|---|---|
-| ProjectDiscovery Chaos | yes | `CHAOS_API_KEY` |
-| SecurityTrails | yes | `SECURITYTRAILS_API_KEY` |
-| c99.nl | yes | `C99_API_KEY` |
-| sub.md | no | keyless in subfaster (`submd`) |
-| crt.sh | no | keyless in subfaster (`crt`) |
+| Source | Engine name | Key | Environment variable |
+|---|---|---|---|
+| ProjectDiscovery Chaos | `chaos` | required | `CHAOS_API_KEY` |
+| SecurityTrails | `securitytrails` | required | `SECURITYTRAILS_API_KEY` |
+| c99.nl | `c99` | required | `C99_API_KEY` |
+| sub.md | `submd` | optional | `SUBMD_API_KEY` |
+| crt.name | `crt` | optional | `CRT_API_KEY` |
 
-Additional sources may be enabled but are not required for a run to be considered valid.
+The last two work without a credential, which is what makes a run with no keys at all still
+return data; a key only improves their results. The three keyed sources report themselves as
+`skipped_no_key` rather than being silently dropped from the selection.
+
+This set is the default selection. `--sources` replaces it, `--exclude-sources` subtracts from
+it, and `--all-sources` queries everything the engine knows. `fastrecon sources` lists the
+available names with their key requirement — an unknown name is rejected at startup rather
+than silently ignored, because a misspelled source is a source that never ran.
 
 ### 6.3 Behaviour
 
@@ -232,26 +245,29 @@ Additional sources may be enabled but are not required for a run to be considere
   normalized, wildcard entries such as `*.example.com` dropped).
 - Out-of-scope results (not equal to the root domain and not a subdomain of it) are dropped.
 
-### 6.4 Rate-limit policy
+### 6.4 Rate limits and time ceilings
 
-Rate limits are handled with **bounded backoff inside the stage budget, then abandonment of
-the source**. Failing fast on the first 429 discards a source that would have answered a
-couple of seconds later; waiting without a ceiling lets one throttled source consume the whole
-run deadline.
+The intent is **bounded waiting, then abandonment of the source**. Failing fast on the first
+429 discards a source that would have answered a couple of seconds later; waiting without a
+ceiling lets one throttled source consume the whole run deadline.
 
-- On a 429 or a documented rate-limit response, retry with exponential backoff and jitter,
-  honouring `Retry-After` when the source sends it.
-- Each source has its own retry budget, derived as a fraction of the enumeration stage budget
-  (default 25%, `--source-retry-budget`). It is a ceiling on total time spent waiting, not a
-  retry count.
-- When the budget is exhausted, the source is abandoned. **Results already collected from it
-  are kept** — a paginated source that returned three pages of five contributes those three.
-  The source is recorded as `rate_limited` with a `partial: true` marker and the wait time
-  spent, and the run continues.
-- Because sources run concurrently, a throttled source never blocks the others; the stage ends
-  when every source has finished or been abandoned, or when the stage deadline hits.
-- Sources with a known request-per-second ceiling are also rate-limited proactively on the
-  client side, so the common case never reaches a 429 at all.
+What is enforced today, through the engine:
+
+- **A time ceiling per source** — `--source-timeout` (default 30s), which bounds a source's
+  whole session, retries and backoff included. When it expires the source is abandoned.
+- **A ceiling on the stage** — the enumeration's share of the run deadline, computed by the
+  pipeline. Sources run concurrently, so a throttled source never blocks the others; the
+  stage ends when every source has finished or when its budget runs out.
+- **Results already collected are kept.** A paginated source that returned three pages of
+  five contributes those three; it is recorded with `partial: true` rather than discarded.
+- **Throttling is distinguished from failure.** A source whose errors carry a 429, a rate-limit
+  message or a quota message is recorded as `rate_limited`, not `error` — "refused to answer"
+  and "had nothing to say" are different findings.
+
+What is **not** implemented: FastRecon does not schedule the retries itself. The engine owns
+its HTTP layer and exposes no retry hook, so honouring `Retry-After` and applying proactive
+client-side rate limiting per source would require a hand-written source layer. Until then the
+timeout above is the ceiling, and the report says which sources hit it.
 
 ## 7. Stage 2 — Exclusions
 
@@ -389,7 +405,10 @@ Optional YAML, selected by `--config` / `FASTRECON_CONFIG`. Never read from an i
 | `--concurrency` | `FASTRECON_CONCURRENCY` | tuned per stage | worker counts |
 | `--log-level` | `FASTRECON_LOG_LEVEL` | `info` | stderr verbosity |
 | `--provider-config` | `FASTRECON_PROVIDER_CONFIG` | — | source credentials file |
-| `--source-retry-budget` | `FASTRECON_SOURCE_RETRY_BUDGET` | `25%` | per-source rate-limit wait ceiling |
+| `--sources` | `FASTRECON_SOURCES` | the five above | enumeration sources to query |
+| `--exclude-sources` | `FASTRECON_EXCLUDE_SOURCES` | — | sources to subtract from the selection |
+| `--all-sources` | `FASTRECON_ALL_SOURCES` | `false` | query every source the engine knows |
+| `--source-timeout` | `FASTRECON_SOURCE_TIMEOUT` | `30s` | time ceiling for a single source |
 | `--listen` (serve) | `FASTRECON_LISTEN` | `:8080` | HTTP bind address in function mode |
 | `--api-token` (serve) | `FASTRECON_API_TOKEN` | — | shared token required by the handler |
 
@@ -502,6 +521,10 @@ large scopes), `text` (human-readable summary).
 
 `completed: false` plus `truncated_by_timeout: true` is how a deadline-truncated run is
 reported — the report is still emitted and still valid.
+
+A host carries the status of the furthest stage that reached it. In an `enum` scope nothing is
+resolved, so every surviving host is `discovered`: the enumeration result is data in its own
+right and must appear in the report, not merely be counted in `stats`.
 
 ### 13.3 Exit codes
 

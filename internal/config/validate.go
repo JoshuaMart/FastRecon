@@ -41,6 +41,10 @@ func (c *Config) Validate() error {
 		fail("ports must not be empty")
 	}
 
+	if !c.AllSources && len(c.Sources) == 0 {
+		fail("no enumeration source selected: set --sources or --all-sources")
+	}
+
 	for _, p := range []struct {
 		name string
 		v    int
@@ -70,6 +74,7 @@ func (c *Config) Validate() error {
 		name string
 		v    time.Duration
 	}{
+		{"source-timeout", c.SourceTimeout},
 		{"resolver-timeout", c.ResolverTimeout},
 		{"scan-timeout", c.ScanTimeout},
 		{"probe-timeout", c.ProbeTimeout},

@@ -164,31 +164,6 @@ func TestNormalizeDomain(t *testing.T) {
 	}
 }
 
-func TestParseAllowance(t *testing.T) {
-	a, err := ParseAllowance("25%")
-	if err != nil {
-		t.Fatalf("ParseAllowance(25%%): %v", err)
-	}
-	if got := a.Of(40 * time.Minute); got != 10*time.Minute {
-		t.Errorf("25%% of 40m = %s, want 10m", got)
-	}
-
-	a, err = ParseAllowance("90s")
-	if err != nil {
-		t.Fatalf("ParseAllowance(90s): %v", err)
-	}
-	// An absolute allowance can never exceed the budget it draws from.
-	if got := a.Of(30 * time.Second); got != 30*time.Second {
-		t.Errorf("90s of a 30s budget = %s, want 30s", got)
-	}
-
-	for _, in := range []string{"", "0%", "150%", "-5m", "soon"} {
-		if _, err := ParseAllowance(in); err == nil {
-			t.Errorf("ParseAllowance(%q) succeeded, want an error", in)
-		}
-	}
-}
-
 func TestWebhookHeadersWithoutURLRejected(t *testing.T) {
 	if _, err := load(t, "-d", "example.com", "--webhook-header", "X-Token: abc"); err == nil {
 		t.Error("webhook-header accepted without webhook-url")

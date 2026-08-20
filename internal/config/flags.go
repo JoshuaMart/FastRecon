@@ -29,7 +29,10 @@ func RegisterFlags(fs *pflag.FlagSet) {
 
 	fs.String("enumerator", "subfaster", "subdomain enumeration engine")
 	fs.String("provider-config", "", "path to the source credentials file (never baked into the image)")
-	fs.String("source-retry-budget", "25%", "per-source rate-limit wait ceiling: percentage of the stage budget, or a duration")
+	fs.StringArray("sources", RequiredSources, "enumeration sources to query (repeatable); see `fastrecon sources`")
+	fs.StringArray("exclude-sources", nil, "sources to remove from the selection (repeatable)")
+	fs.Bool("all-sources", false, "query every source the engine knows, not just the selection")
+	fs.Duration("source-timeout", 30*time.Second, "time ceiling for a single source, retries and backoff included")
 
 	fs.StringArray("resolvers", nil, "DNS resolvers to use (repeatable); empty uses the bundled set")
 	fs.Int("resolver-concurrency", 100, "concurrent DNS queries")
