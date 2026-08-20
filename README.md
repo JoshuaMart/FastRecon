@@ -154,9 +154,6 @@ A few things the shape is deliberate about:
   scan was narrowed on purpose.
 - **Each port names the addresses it was found on.** Without it, one service
   behind ten CNAMEs looks exactly like ten services.
-- **`url` omits the port when it is the scheme's default**, which makes a
-  scheme on an unusual port — TLS answering on 80 — the only kind that keeps
-  one.
 - **A truncated run is still a valid report**, flagged by `completed` and
   `truncated_by_timeout`. Running out of time is data, not an error.
 
