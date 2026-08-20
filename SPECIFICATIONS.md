@@ -1,39 +1,45 @@
 # FastRecon — Specifications
 
-> Status: draft v0.1 — design document, no implementation yet.
+> What this is: the design record. It states the decisions, the constraints that forced
+> them, and the measurements behind the defaults — including the options that were tried and
+> rejected, and the things that are deliberately not built.
+>
+> [README.md](README.md) is the introduction and the usage guide. This document does not
+> repeat it, and the flag reference lives in `fastrecon --help`, which is generated from the
+> definitions and cannot drift.
 
 ## 1. Overview
 
-FastRecon is a single-binary attack-surface discovery tool. Given a root domain and an
-exclusion list, it enumerates subdomains from multiple passive sources, filters out
-excluded hosts, separates live hosts from dead ones, optionally scans ports, and probes
-the discovered ports for HTTP services.
+FastRecon takes a root domain and an exclusion list, enumerates subdomains from passive
+sources, drops the excluded ones, separates live hosts from dead, scans ports and probes
+them for HTTP services.
 
-It is designed to run identically in four environments:
+It runs identically in four environments:
 
 - as a local CLI binary,
 - inside a Docker container,
 - as a serverless job (primary target: Scaleway Serverless Jobs),
-- as a serverless function (container-based, primary target: Scaleway Serverless Functions).
+- behind an HTTP endpoint (primary target: Scaleway Serverless Containers).
 
 The same artifact — one container image, one binary — serves all four. There is no separate
 "serverless build". The binary exposes two entrypoints: the default one-shot CLI run, and a
 `serve` subcommand that turns the same pipeline into an HTTP handler for the function
 deployment.
 
-## 2. Goals
+## 2. Constraints
 
-- One static binary with no runtime dependency on external tools. This is the target, not a
-  hard constraint: shelling out to an external binary is acceptable where it buys something
-  real, as long as the default container image stays self-contained.
-- Runs unprivileged: no root, no `CAP_NET_RAW`, no raw sockets required on the default path.
-- Fully configurable via CLI flags **and** environment variables (serverless jobs configure
-  through env vars and args).
-- Zero secrets baked into the container image — the image is built by CI and is public-safe.
-- Selectable pipeline stages: enumeration only, enumeration + ports, or full.
-- Machine-readable output (JSON) usable by downstream tooling.
-- Stateless: every run is self-contained and produces a complete report. No database, no
-  cross-run diffing inside the tool.
+These are what the rest of the document keeps coming back to.
+
+- **One static binary**, no runtime dependency on external tools. A target rather than a
+  hard rule — shelling out is acceptable where it buys something real — but the default
+  image stays self-contained. It has already cost one engine choice (§9).
+- **Unprivileged.** No root, no `CAP_NET_RAW`, no raw sockets on the default path. This is
+  what makes a serverless deployment possible at all, and it rules out SYN scanning.
+- **Configurable entirely through environment variables**, since that is all a job
+  definition offers.
+- **No secret in the image.** CI builds it and publishes it publicly.
+- **Stateless.** Every run is self-contained. No database, no cross-run diffing: whatever
+  consumes the report owns that.
 
 ## 3. Stack decision
 
@@ -89,55 +95,39 @@ queue consumer without restructuring.
   opposite — it exists to be called — which is why the HTTP entrypoint is a separate
   subcommand rather than always-on behaviour.
 
-### 4.2 Serverless function specifics
+### 4.2 The HTTP deployment
 
-The function deployment is **container-based**: the same image, started with `serve` instead
-of a one-shot run. This keeps a single artifact and a single code path — the handler builds a
-run configuration and calls the same pipeline the CLI calls.
+The same image, started with `serve` instead of a one-shot run: one artifact, one code path,
+since the handler builds a run configuration and calls the pipeline the CLI calls.
 
-- **The function's timeout is the binding constraint.** It is materially shorter than a job's,
-  and a full five-stage run over a large scope will not fit. The function is intended for
-  `enum` and `resolve` scopes; `ports` and `full` are permitted but the caller owns the risk.
-  The tool does not silently downgrade the requested stages — it runs what was asked and
-  returns a truncated report if the deadline hits.
-- **The deadline is derived, not assumed.** On startup the handler resolves its budget from,
-  in order: an explicit `timeout` in the request body, `FASTRECON_TIMEOUT`, or a platform-
-  provided remaining-time value when one is available. It reserves a margin (default 10%) to
-  serialize and return the report, so the caller always receives a well-formed document
-  instead of a platform-level timeout error.
-- **No work after the response.** On most FaaS platforms the instance is frozen or reclaimed
-  once the handler returns, so "respond 202 immediately, finish in the background, POST to a
-  webhook later" is not reliable. The function therefore runs **synchronously** and returns
-  the report in the response body. Work that cannot fit in a function timeout belongs in a
-  job — that is the split between the two deployments, and the documentation must say so
-  plainly rather than offering a fire-and-forget mode that intermittently loses runs.
-- **Concurrency and reuse.** See §4.3 — the engine makes this the hardest constraint of the
-  deployment, and it is resolved by freezing how the engine is wired and serializing runs.
-- **Authentication.** The handler requires a shared token (`--api-token` /
-  `FASTRECON_API_TOKEN`) compared in constant time, in addition to whatever the platform
-  provides. `serve` refuses to start without one: an unauthenticated subdomain-enumeration
-  endpoint is free reconnaissance for whoever finds it, charged to your API quotas.
+- **The request timeout is the binding constraint.** It is materially shorter than a job's, so
+  a full five-stage run over a large scope will not fit. `enum` and `resolve` are what this
+  deployment is for; `ports` and `full` are permitted and the caller owns the risk. The
+  requested scope is never silently downgraded — it runs what was asked and returns a
+  truncated report if the deadline hits.
+- **The deadline is derived.** The request's `timeout`, else `FASTRECON_TIMEOUT`, minus the
+  `--output-margin` share reserved to serialize the response, so the caller receives a
+  well-formed truncated report instead of a platform-level timeout. No platform
+  remaining-time variable is read: none was verifiable for the target platform, and inventing
+  a name would mislabel every run the day it changed.
+- **No work after the response.** On most such platforms the instance is frozen or reclaimed
+  once the handler returns, so "answer 202, finish in the background, POST later" loses runs
+  intermittently. The handler runs **synchronously**. Work that does not fit belongs in a
+  job, and that is the whole split between the two deployments.
+- **Authentication.** A shared token compared in constant time, on top of whatever the
+  platform provides. `serve` refuses to start without one: an unauthenticated
+  subdomain-enumeration endpoint is free reconnaissance for whoever finds it, charged to your
+  API quotas.
+- **Concurrency.** See §4.3 — the hardest constraint of this deployment.
 
-#### Request and response
+#### Contract
 
-```
-POST /run
-Authorization: Bearer <token>
-
-{
-  "domain": "example.com",
-  "exclude": ["*.dev.example.com", "re:^staging[0-9]*\\."],
-  "stages": "enum",
-  "ports": "top-100",
-  "timeout": "300s",
-  "webhook_url": "https://internal.example.net/hooks/recon"
-}
-```
-
-The response body is the same report document defined in §13.2. `GET /healthz` returns
-readiness for the platform's probe, without a token. Any field omitted from the body falls
-back to the environment-variable configuration, so a function can be deployed fully
-pre-configured and called with `{"domain": "..."}` alone.
+`POST /run` with a bearer token; the body names a domain and, optionally, `exclude`,
+`stages`, `ports` and `timeout`. Anything omitted falls back to the environment, so a
+pre-configured deployment is called with `{"domain": "..."}` alone. Anything **not** in that
+list is rejected rather than ignored — see §4.3 for what is excluded and why. The response is
+the report document of §13.2. `GET /healthz` needs no token, which is what makes it usable as
+a platform probe.
 
 | Status | Meaning |
 |---|---|
@@ -147,14 +137,10 @@ pre-configured and called with `{"domain": "..."}` alone.
 | `429` | a run is already in progress on this instance; `Retry-After` set |
 | `500` | a transient failure of ours: no report produced |
 
-The `400`/`500` split mirrors the exit codes exactly: a preparation failure marked transient
-is ours, anything else is the caller's. Not every option can be checked before a stage is
-built — a port expression is parsed by the scanner — so some caller mistakes surface once the
-run starts and still return `400`, with the offending part named.
-
-An **unknown field in the body is rejected**, not ignored. Most of them name an option that
-is deliberately not caller-settable, and silently dropping it would run a scan the caller did
-not ask for while reporting success.
+The `400`/`500` split mirrors the exit codes: a preparation failure marked transient is ours,
+anything else is the caller's. Not every option can be checked before a stage is built — a
+port expression is parsed by the scanner — so some caller mistakes surface once the run
+starts and still return `400`, with the offending part named.
 
 ### 4.3 What the request may not set, and why
 
@@ -187,27 +173,8 @@ those integrations is the whole reason the engine is a dependency.
 
 ## 5. Pipeline
 
-```
-input (domain + exclusions)
-      │
-      ▼
- [1] ENUMERATE ──► raw subdomains (multi-source, deduplicated)
-      │
-      ▼
- [2] EXCLUDE ────► in-scope subdomains
-      │
-      ▼
- [3] RESOLVE ────► live hosts (with A/AAAA/CNAME) + dead hosts
-      │
-      ▼
- [4] PORTSCAN ───► open ports per live host
-      │
-      ▼
- [5] HTTP PROBE ─► HTTP(S) services with correct scheme, status, title, tech
-      │
-      ▼
-   report (JSON) ──► stdout | file | webhook
-```
+Five stages, drawn in the [README](README.md). Each consumes the previous one's
+output, which is why the scope is a ladder rather than a set.
 
 ### 5.1 Stage selection
 
@@ -603,37 +570,11 @@ configurable without a config file.
 Optional YAML, selected by `--config` / `FASTRECON_CONFIG`. Never read from an implicit
 `$HOME` path unless `--config auto` is passed, so container runs stay deterministic.
 
-### 11.3 Core options (indicative)
+### 11.3 The option surface
 
-| Flag | Env | Default | Purpose |
-|---|---|---|---|
-| `-d, --domain` | `FASTRECON_DOMAIN` | — | root domain (required) |
-| `--exclude`, `--exclude-file` | `FASTRECON_EXCLUDE` | — | exclusion patterns |
-| `--stages` | `FASTRECON_STAGES` | `full` | pipeline scope |
-| `--ports` | `FASTRECON_PORTS` | `top-100` | port selection |
-| `--scan-mode` | `FASTRECON_SCAN_MODE` | `connect` | `connect` \| `syn` |
-| `--output`, `-o` | `FASTRECON_OUTPUT` | `-` (stdout) | file sink path |
-| `--format` | `FASTRECON_FORMAT` | `json` | `json` \| `jsonl` \| `text` |
-| `--webhook-url` | `FASTRECON_WEBHOOK_URL` | — | webhook sink |
-| `--timeout` | `FASTRECON_TIMEOUT` | `30m` | global deadline |
-| `--concurrency` | `FASTRECON_CONCURRENCY` | tuned per stage | worker counts |
-| `--log-level` | `FASTRECON_LOG_LEVEL` | `info` | stderr verbosity |
-| `--provider-config` | `FASTRECON_PROVIDER_CONFIG` | — | source credentials file |
-| `--sources` | `FASTRECON_SOURCES` | the five above | enumeration sources to query |
-| `--exclude-sources` | `FASTRECON_EXCLUDE_SOURCES` | — | sources to subtract from the selection |
-| `--all-sources` | `FASTRECON_ALL_SOURCES` | `false` | query every source the engine knows |
-| `--source-timeout` | `FASTRECON_SOURCE_TIMEOUT` | `30s` | time ceiling for a single source (whole seconds) |
-| `--probe-rate` | `FASTRECON_PROBE_RATE` | `200` | HTTP probes per second |
-| `--resolvers` | `FASTRECON_RESOLVERS` | bundled set | DNS resolver IPs to use |
-| `--resolvers-file` | `FASTRECON_RESOLVERS_FILE` | — | file of resolver IPs |
-| `--resolvers-url` | `FASTRECON_RESOLVERS_URL` | — | https URL of a resolver list |
-| `--validate-resolvers` | `FASTRECON_VALIDATE_RESOLVERS` | `true` | health-check the pool before the run |
-| `--resolver-health-budget` | `FASTRECON_RESOLVER_HEALTH_BUDGET` | `30s` | ceiling on the health check |
-| `--wildcard-probes` | `FASTRECON_WILDCARD_PROBES` | `3` | random names probed per parent domain |
-| `--scan-retries` | `FASTRECON_SCAN_RETRIES` | `2` | retries per port |
-| `--probe-retries` | `FASTRECON_PROBE_RETRIES` | `1` | retries per HTTP probe |
-| `--listen` (serve) | `FASTRECON_LISTEN` | `:8080` | HTTP bind address in function mode |
-| `--api-token` (serve) | `FASTRECON_API_TOKEN` | — | shared token required by the handler |
+Not reproduced here. `fastrecon --help` is generated from the flag definitions, so it is the
+only listing that cannot fall out of step with the binary. The options that carry a design
+decision are described in the stage sections above.
 
 ## 12. Secrets and API keys
 
@@ -695,35 +636,6 @@ Sinks are independent and can be combined in a single run:
   The response body is drained but never logged: a webhook target may echo the payload back,
   and re-logging it would undo the redaction applied upstream.
 
-### 13.4 Delivery is detached from the run
-
-Delivery runs on its own context, derived from `context.WithoutCancel` and bounded by the
-share of the budget reserved by `--output-margin`.
-
-A stopped job arrives as a signal that cancels the run's context. The entire point of
-catching that signal is that the partial report still reaches its destinations — which
-delivering on the cancelled context would prevent. The sinks therefore get a fresh deadline
-of their own.
-
-The file sink writes atomically, except to destinations that are not regular files:
-`/dev/stdout`, `/dev/null` and named pipes cannot be replaced by a rename, and there is
-nothing to make atomic. Those are written through directly.
-
-Formats:
-
-| | |
-|---|---|
-| `json` | one indented document; the default, and what a human pipes into `jq` |
-| `json-compact` | the same document on **one line** |
-| `jsonl` | one host per line, stream-friendly for large scopes |
-| `text` | human-readable summary |
-
-`json-compact` exists for log sinks. A serverless job's report reaches its reader as log
-lines, and an indented document becomes hundreds of them — a real run of 75 hosts produced
-1889 — which a collector may reorder or drop, leaving reassembly to guesswork. `jsonl` also
-fixes the line count but drops the run metadata, the per-source accounting and the warnings,
-since it emits only hosts. One line keeps everything.
-
 ### 13.2 Report shape (indicative)
 
 ```json
@@ -757,16 +669,23 @@ since it emits only hosts. One line keeps everything.
       "status": "live",
       "addresses": ["93.184.216.34"],
       "cname": ["edge.example.net"],
-      "cdn": [{"name": "cloudflare", "type": "waf", "addresses": ["93.184.216.34"], "scan_limited": true}],
+      "cdn": [{"name": "cloudflare", "type": "waf",
+               "addresses": ["93.184.216.34"], "scan_limited": true}],
       "ports": [
         {"port": 443, "protocol": "tcp", "state": "open",
+         "addresses": ["93.184.216.34"],
          "http": {
            "url": "https://api.example.com",
+           "final_url": "https://api.example.com/v2",
            "scheme": "https",
            "status_code": 200,
            "title": "API",
            "content_length": 1533,
-           "tech": ["nginx"],
+           "response_time_ms": 251,
+           "server": "nginx",
+           "redirects": ["https://api.example.com"],
+           "redirect_unfollowed": false,
+           "tech": ["nginx", "HSTS"],
            "tls": {"subject_cn": "*.example.com", "issuer": "R3",
                    "not_after": "2026-06-01T00:00:00Z",
                    "sans": ["api.example.com", "www.example.com"]}
@@ -805,6 +724,35 @@ Distinct codes matter because a job scheduler's only signal is the exit status, 
 its retry on them. A network blip reported as `1` — invalid configuration — is something no
 scheduler will ever retry.
 
+### 13.4 Delivery is detached from the run
+
+Delivery runs on its own context, derived from `context.WithoutCancel` and bounded by the
+share of the budget reserved by `--output-margin`.
+
+A stopped job arrives as a signal that cancels the run's context. The entire point of
+catching that signal is that the partial report still reaches its destinations — which
+delivering on the cancelled context would prevent. The sinks therefore get a fresh deadline
+of their own.
+
+The file sink writes atomically, except to destinations that are not regular files:
+`/dev/stdout`, `/dev/null` and named pipes cannot be replaced by a rename, and there is
+nothing to make atomic. Those are written through directly.
+
+Formats:
+
+| | |
+|---|---|
+| `json` | one indented document; the default, and what a human pipes into `jq` |
+| `json-compact` | the same document on **one line** |
+| `jsonl` | one host per line, stream-friendly for large scopes |
+| `text` | human-readable summary |
+
+`json-compact` exists for log sinks. A serverless job's report reaches its reader as log
+lines, and an indented document becomes hundreds of them — a real run of 75 hosts produced
+1889 — which a collector may reorder or drop, leaving reassembly to guesswork. `jsonl` also
+fixes the line count but drops the run metadata, the per-source accounting and the warnings,
+since it emits only hosts. One line keeps everything.
+
 ## 14. Logging and observability
 
 - All logs go to **stderr**, structured JSON by default (`--log-format=text` for humans),
@@ -831,44 +779,43 @@ scheduler will ever retry.
 
 ### 15.2 CI
 
-GitHub Actions, triggered on push, PR, and tag:
+GitHub Actions, on push, pull request and tag:
 
-1. lint (`golangci-lint`) + `go vet`
-2. unit tests with race detector; integration tests behind a build tag (they need network)
-3. secret scan (gitleaks) — build fails on any hit
-4. build the `linux/amd64` image, push to the registry (GHCR and/or Scaleway Container Registry)
-5. tags: `latest` on default branch, semver on git tags, plus the commit SHA
-6. no secret is ever passed as a build arg; registry credentials come from CI secrets only
+1. `go vet` and `golangci-lint`
+2. unit tests with the race detector
+3. **the binary must still be statically linked** — checked by building it and reading the
+   ELF header. A dependency that reaches libc through `dlopen` produces a binary that
+   compiles, passes every test, and then fails at `exec` in the distroless image with a
+   message that names nothing. This has happened once already; see §9.
+4. secret scan (gitleaks) over the full history — a hit fails the build. Known-fake test
+   fixtures are exempted one literal at a time in `.gitleaks.toml`, never by path: a test
+   file can hold a real credential as easily as any other.
+5. multi-arch image build and push to GHCR
+6. tags: the branch name, semver on git tags, and `sha-<commit>`. **There is no `latest`.**
+   Pin a `sha-` tag for anything scheduled.
 
-## 16. Project layout (planned)
+No secret is ever passed as a build argument: they persist in the image history.
+
+## 16. Project layout
 
 ```
-cmd/fastrecon/            CLI entrypoint, flag/env binding
-internal/config/          config resolution + validation + precedence
-internal/pipeline/        stage orchestration, deadline budgeting
-internal/enumerate/       Enumerator interface + subfaster implementation
-internal/exclude/         pattern parsing and matching
-internal/resolve/         dnsx implementation, wildcard detection
-internal/portscan/        naabu implementation, connect/syn modes
-internal/probe/           httpx implementation
-internal/report/          report model, JSON schema, formatters
-internal/sink/            stdout, file, webhook
-internal/secrets/         credential resolution + redaction
-internal/httpapi/         `serve` handler for the serverless function deployment
-deploy/scaleway/          job + function definition examples, CLI/Terraform snippets
-Dockerfile
-.github/workflows/
+cmd/fastrecon/       CLI entrypoint, subcommand dispatch, exit codes
+internal/app/        run assembly, shared by the CLI and the HTTP handler
+internal/config/     resolution, precedence, validation
+internal/pipeline/   stage ladder, deadline budgeting, partial results
+internal/enumerate/  subfaster-backed Enumerator
+internal/exclude/    exclusion pattern parsing and matching
+internal/resolve/    dnsx-backed resolver, resolver pool, wildcard detection
+internal/portscan/   TCP connect scanner, port selections, CDN determination
+internal/probe/      httpx-backed HTTP prober
+internal/serve/      the `serve` handler
+internal/report/     report model and formatters
+internal/sink/       stdout, file, webhook
+internal/secrets/    credential resolution and redaction
+internal/ratelimit/  token bucket, shared by the scan and the probe
+internal/stage/      the scope ladder
+deploy/scaleway/     job and container definitions
 ```
 
-## 17. Delivery phases
-
-1. **Skeleton** — module, CLI, config precedence, report model, stdout/file sinks, Dockerfile, CI.
-2. **Enumeration + exclusions** — stage 1 and 2 end to end, `--stages enum` fully usable.
-3. **Resolution** — stage 3 with wildcard detection.
-4. **Port scan** — stage 4, connect mode, CDN handling.
-5. **HTTP probe** — stage 5, `--stages full`.
-6. **Webhook sink, hardening** — retries, redaction, timeout truncation, exit codes.
-7. **Scaleway job deployment** — job definition, env-var configuration, documented run.
-8. **Serverless function deployment** — `serve` handler, auth, derived deadline, documented
-   container-based function deployment.
-
+Each stage is an interface in `internal/pipeline` with one implementation. That is what
+makes the engines replaceable — and two already were, once each was actually run.
