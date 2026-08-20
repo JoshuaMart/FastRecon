@@ -210,8 +210,8 @@ type Enumerator interface {
 ```
 
 so that `subfinder` (library or binary) or a hand-written source can be substituted without
-touching the rest of the pipeline. v1 ships the subfaster-backed implementation; a
-`--enumerator` flag selects among registered implementations.
+touching the rest of the pipeline. v1 ships the subfaster-backed implementation and no way to
+select another: an option offering a choice of one would be a flag that does nothing.
 
 ### 6.2 Required sources
 
@@ -484,6 +484,10 @@ for origin addresses, ports 80 and 443 for the edges.
   TLS connections — subject CN, issuer, expiry and SANs.
 - Tunables: concurrency, request timeout, retries, follow-redirects toggle and hop limit,
   custom User-Agent and headers.
+- **Redirects are not followed by default.** The `Location` target is recorded in `final_url`
+  either way, so following them buys the final page's title and status at the cost of a
+  request per hop to a host that may be out of scope entirely. `--probe-follow-redirects`
+  turns it on.
 - TLS SANs discovered here may reveal additional hostnames; v1 **records** them in the report
   but does not feed them back into the pipeline. (Candidate for v2: a re-enumeration loop.)
 

@@ -40,7 +40,6 @@ func Load(fs *pflag.FlagSet) (*Config, error) {
 	cfg.Timeout = l.dur("timeout")
 	cfg.OutputMargin = l.f64("output-margin")
 
-	cfg.Enumerator = l.str("enumerator")
 	cfg.ProviderConfig = l.str("provider-config")
 	cfg.Sources = l.strs("sources")
 	cfg.ExcludeSources = l.strs("exclude-sources")

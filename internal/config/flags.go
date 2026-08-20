@@ -27,7 +27,6 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.Duration("timeout", 30*time.Minute, "global deadline for the whole run")
 	fs.Float64("output-margin", 0.10, "fraction of the deadline reserved to build and deliver the report")
 
-	fs.String("enumerator", "subfaster", "subdomain enumeration engine")
 	fs.String("provider-config", "", "path to the source credentials file (never baked into the image)")
 	fs.StringArray("sources", RequiredSources, "enumeration sources to query (repeatable); see `fastrecon sources`")
 	fs.StringArray("exclude-sources", nil, "sources to remove from the selection (repeatable)")
@@ -56,7 +55,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.Int("probe-concurrency", 50, "concurrent HTTP probes")
 	fs.Duration("probe-timeout", 10*time.Second, "timeout per HTTP probe")
 	fs.Int("probe-retries", 1, "retries per HTTP probe")
-	fs.Bool("probe-follow-redirects", true, "follow redirects while probing")
+	fs.Bool("probe-follow-redirects", false, "follow redirects while probing; the Location target is recorded either way")
 	fs.Int("probe-max-redirects", 5, "maximum redirect hops")
 	fs.String("probe-user-agent", "", "User-Agent sent while probing; empty uses the built-in one")
 	fs.StringArray("probe-header", nil, "extra header sent while probing, as 'Name: value' (repeatable)")

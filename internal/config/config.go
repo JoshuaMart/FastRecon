@@ -39,7 +39,6 @@ type Config struct {
 	OutputMargin float64
 
 	// Enumeration
-	Enumerator     string
 	ProviderConfig string
 	Sources        []string
 	ExcludeSources []string
