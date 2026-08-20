@@ -82,82 +82,57 @@ Arbitrary combinations are deliberately not expressible. Probing without a port
 scan would mean inventing a default port set, which looks like discovery but is
 an assumption.
 
-## Example report
+## What a run looks like
 
-<details>
-<summary>A run in JSON (abridged)</summary>
+```
+$ fastrecon -d example.com --stages full --ports 80,443 --format text
 
-```json
-{
-  "schema_version": "1.0",
-  "run": {
-    "id": "01M0GFQGGMK0TF2MXRZ8EG7373",
-    "domain": "example.com",
-    "scope": "full",
-    "stages": ["enumerate", "exclude", "resolve", "portscan", "httpprobe"],
-    "started_at": "2026-01-01T00:00:00Z",
-    "duration_ms": 383951,
-    "completed": true,
-    "truncated_by_timeout": false,
-    "version": "1.2.3",
-    "environment": "serverless-job"
-  },
-  "sources": [
-    {"name": "crt", "status": "ok", "found": 617, "duration_ms": 121},
-    {"name": "chaos", "status": "skipped_no_key", "found": 0},
-    {"name": "c99", "status": "rate_limited", "found": 40, "partial": true}
-  ],
-  "stats": {
-    "enumerated": 617, "excluded": 0, "in_scope": 617,
-    "live": 287, "dead": 330, "wildcard": 0,
-    "open_ports": 421, "http_services": 406
-  },
-  "hosts": [
-    {
-      "host": "api.example.com",
-      "status": "live",
-      "addresses": ["93.184.216.34"],
-      "cname": ["edge.example.net"],
-      "cdn": [{"name": "cloudflare", "type": "waf",
-               "addresses": ["93.184.216.34"], "scan_limited": true}],
-      "ports": [
-        {"port": 443, "protocol": "tcp", "state": "open",
-         "addresses": ["93.184.216.34"],
-         "http": {
-           "url": "https://api.example.com",
-           "scheme": "https",
-           "status_code": 200,
-           "title": "API",
-           "content_length": 1533,
-           "tech": ["nginx", "HSTS"],
-           "tls": {"subject_cn": "*.example.com", "issuer": "R3",
-                   "not_after": "2026-06-01T00:00:00Z",
-                   "sans": ["api.example.com", "www.example.com"]}
-         }}
-      ]
-    },
-    {"host": "old.example.com", "status": "dead", "reason": "nxdomain"}
-  ],
-  "warnings": ["198 address(es) behind a CDN or WAF were scanned for ports 80,443 only"]
-}
+run      01M0GHWAB49MM5HBE9057HF08T
+domain   example.com
+scope    full (enumerate > exclude > resolve > portscan > httpprobe)
+duration 2.2s
+status   complete
+
+sources
+  crt                ok                  75
+
+stats
+  enumerated     75
+  excluded       0
+  in scope       75
+  live           16
+  dead           59
+  wildcard       0
+  open ports     32
+  http services  32
+
+hosts
+  ai.example.com                                  dead      nxdomain
+  budget.example.com                              live      80/https(303) 443/https(303)
+  cloud.example.com                               live      80/https(302) 443/https(302)
+  dashboard.example.com                           live      80/http(308) 443/https(200)
+  bitwarden.example.com                           dead      nxdomain
+  …
 ```
 
-A few things the shape is deliberate about:
+`--format json` gives the same run as a document: per-source accounting, the
+addresses each port was found on, TLS certificates, detected technologies and
+redirect chains. The **[full schema](SPECIFICATIONS.md#132-report-shape)** is in
+the specification.
 
-- **Dead hosts stay in the report.** A dangling CNAME is a finding, not noise.
-  `nxdomain` and `no_answer` are distinct: a name that exists but has no address
-  is not a name that does not exist.
-- **Every source appears**, successful or not. A source that silently returns
-  nothing is what this accounting exists to expose.
+A few things the report is deliberate about, because they change how you read
+it:
+
+- **Dead hosts stay in.** A dangling CNAME is a finding, not noise. `nxdomain`
+  and `no_answer` are distinct: a name that exists but has no address is not a
+  name that does not exist.
+- **Every source appears**, successful or not — a source that silently returns
+  nothing is exactly what that accounting exists to expose.
 - **`scan_limited` marks a narrowed sweep.** "Only 80 and 443 are open" is
   indistinguishable from a genuinely minimal host unless the report says the
   scan was narrowed on purpose.
-- **Each port names the addresses it was found on.** Without it, one service
-  behind ten CNAMEs looks exactly like ten services.
 - **A truncated run is still a valid report**, flagged by `completed` and
   `truncated_by_timeout`. Running out of time is data, not an error.
-
-</details>
 
 <details>
 <summary>Other output formats</summary>
@@ -341,12 +316,12 @@ make static  # assert the binary is still statically linked
 make docker  # build the image
 ```
 
-`make static` is not optional busywork: the runtime image is
-`distroless/static`, which has no dynamic loader. A dependency that reaches
-libc through `dlopen` produces a binary that builds fine, passes every test,
-and then fails at `exec` inside the container. CI runs the same check.
+`make static` is not optional busywork — a dependency that reaches libc through
+`dlopen` produces a binary that builds fine, passes every test, and then fails
+at `exec` inside the distroless image. CI runs the same check; the incident that
+prompted it is in [SPECIFICATIONS.md](SPECIFICATIONS.md) §9.
 
-The design, the measurements behind the defaults, and the reasoning for the
-choices are in **[SPECIFICATIONS.md](SPECIFICATIONS.md)**.
+The design, the measurements behind the defaults, and the options that were
+tried and rejected are in **[SPECIFICATIONS.md](SPECIFICATIONS.md)**.
 
 </details>

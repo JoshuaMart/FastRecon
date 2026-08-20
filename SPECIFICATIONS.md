@@ -176,25 +176,18 @@ those integrations is the whole reason the engine is a dependency.
 Five stages, drawn in the [README](README.md). Each consumes the previous one's
 output, which is why the scope is a ladder rather than a set.
 
-### 5.1 Stage selection
+### 5.1 Why a ladder and not a set
 
-Controlled by a single option, `--stages` / `FASTRECON_STAGES`:
+`--stages` takes one value — `enum`, `resolve`, `ports`, `full` — and each rung runs
+everything below it. The [README](README.md#choosing-a-scope) has the table.
 
-| Value | Stages run | Meaning |
-|---|---|---|
-| `enum` | 1, 2 | Subdomain enumeration only. |
-| `resolve` | 1, 2, 3 | Enumeration + live/dead separation. |
-| `ports` | 1, 2, 3, 4 | Enumeration + resolution + port scan. |
-| `full` | 1–5 | Everything, including HTTP probing. (default) |
+Arbitrary combinations are deliberately not expressible. Probing without a port scan would
+mean inventing a default port set, which produces results that look like discovery but are
+an assumption. Selecting `enum` performs no DNS query beyond what the passive sources make
+themselves, which is what lets that scope be described as sending nothing to the target.
 
-Stages form a **strict ladder**: each depends on the one before it, and only the four values
-above are accepted. Arbitrary combinations (`enumerate,httpprobe`, skipping the port scan) are
-deliberately not supported — probing without a port scan would mean inventing a default port
-set, which produces results that look like discovery but are really an assumption. Selecting
-`enum` must not perform a single DNS query beyond what the passive sources do themselves.
-
-The report always states which stages ran, so a consumer can tell "no open ports found"
-apart from "port scanning did not run".
+The report always states which stages ran, so "no open ports found" is distinguishable from
+"port scanning did not run".
 
 ## 6. Stage 1 — Subdomain enumeration
 
@@ -228,17 +221,14 @@ select another: an option offering a choice of one would be a flag that does not
 
 These must be supported and enabled by default when credentials are present:
 
-| Source | Engine name | Key | Environment variable |
-|---|---|---|---|
-| ProjectDiscovery Chaos | `chaos` | required | `CHAOS_API_KEY` |
-| SecurityTrails | `securitytrails` | required | `SECURITYTRAILS_API_KEY` |
-| c99.nl | `c99` | required | `C99_API_KEY` |
-| sub.md | `submd` | optional | `SUBMD_API_KEY` |
-| crt.name | `crt` | optional | `CRT_API_KEY` |
+Five sources must be supported and enabled by default: Chaos, SecurityTrails, c99.nl, sub.md
+and crt.name. The [README](README.md#credentials) maps them to engine names and key
+requirements.
 
-The last two work without a credential, which is what makes a run with no keys at all still
-return data; a key only improves their results. The three keyed sources report themselves as
-`skipped_no_key` rather than being silently dropped from the selection.
+Two of them work without a credential, which is what makes a run with no keys at all still
+return data. The three keyed ones report themselves as `skipped_no_key` rather than being
+silently dropped — the distinction between "asked and refused" and "never asked" is the whole
+point of the per-source accounting.
 
 This set is the default selection. `--sources` replaces it, `--exclude-sources` subtracts from
 it, and `--all-sources` queries everything the engine knows. `fastrecon sources` lists the
@@ -581,16 +571,10 @@ decision are described in the stage sections above.
 Hard requirement: **the container image contains no credentials**, because CI builds and
 publishes it.
 
-Accepted credential sources, in precedence order:
-
-1. **Environment variables** — the primary path for both Docker and Scaleway Jobs.
-   Two accepted spellings: the upstream names the enumeration engine already understands
-   (`CHAOS_API_KEY`, `SECURITYTRAILS_API_KEY`, `C99_API_KEY`, …) and a namespaced form
-   (`FASTRECON_KEY_CHAOS`, …). The namespaced form wins on conflict.
-2. **A provider config file** mounted at runtime, path given by `--provider-config`.
-   Subfinder/subfaster-compatible YAML. Never copied into the image.
-3. **A secret file per key** — `FASTRECON_KEY_CHAOS_FILE=/run/secrets/chaos`, for Docker
-   secrets and mounted-volume setups.
+Four channels in a fixed precedence, listed in the [README](README.md#credentials). Two
+design points behind them: the upstream spellings (`CHAOS_API_KEY`, …) are accepted because
+the enumeration engine reads those and nothing else, and the `_FILE` form exists because
+Docker and Kubernetes deliver secrets as mounted files rather than variables.
 
 Enforcement and hygiene:
 
@@ -636,7 +620,7 @@ Sinks are independent and can be combined in a single run:
   The response body is drained but never logged: a webhook target may echo the payload back,
   and re-logging it would undo the redaction applied upstream.
 
-### 13.2 Report shape (indicative)
+### 13.2 Report shape
 
 ```json
 {
@@ -712,17 +696,17 @@ right and must appear in the report, not merely be counted in `stats`.
 
 ### 13.3 Exit codes
 
-| Code | Meaning |
-|---|---|
-| 0 | run completed, report emitted |
-| 1 | invalid configuration / usage |
-| 2 | report emitted, but the run did not finish its scope — the deadline was reached, or a stage failed or is unavailable |
-| 3 | run produced a report, but a sink failed (e.g. webhook delivery) |
-| 4 | fatal error, no report produced — including a transient preparation failure such as an unreachable resolver list, or a health check that left no usable resolver |
+Five of them, tabulated in the [README](README.md#exit-codes).
 
-Distinct codes matter because a job scheduler's only signal is the exit status, and it keys
-its retry on them. A network blip reported as `1` — invalid configuration — is something no
-scheduler will ever retry.
+They are distinct because a job scheduler's only signal is the exit status, and it keys its
+retry on that. A network blip reported as `1` — invalid configuration — is something no
+scheduler will ever retry, and a truncated run reported as `0` would be a silent lie about
+completeness.
+
+The split runs deeper than the table: a preparation failure is either transient — an
+unreachable resolver list, a health check that left nothing usable — and therefore ours, or a
+mistake in the configuration and therefore the caller's. The HTTP handler makes the same
+split into `500` and `400`.
 
 ### 13.4 Delivery is detached from the run
 
@@ -738,20 +722,18 @@ The file sink writes atomically, except to destinations that are not regular fil
 `/dev/stdout`, `/dev/null` and named pipes cannot be replaced by a rename, and there is
 nothing to make atomic. Those are written through directly.
 
-Formats:
+Four formats, listed in the [README](README.md). Only one of them is a decision worth
+recording: **`json-compact`**, the whole document on one line.
 
-| | |
-|---|---|
-| `json` | one indented document; the default, and what a human pipes into `jq` |
-| `json-compact` | the same document on **one line** |
-| `jsonl` | one host per line, stream-friendly for large scopes |
-| `text` | human-readable summary |
+A job's report reaches its reader as log lines, and an indented document becomes hundreds of
+them — a measured run of 75 hosts produced 1889 — which a collector may reorder or drop.
+`jsonl` fixes the line count but emits only hosts, dropping the run metadata, the per-source
+accounting and the warnings. One line keeps everything.
 
-`json-compact` exists for log sinks. A serverless job's report reaches its reader as log
-lines, and an indented document becomes hundreds of them — a real run of 75 hosts produced
-1889 — which a collector may reorder or drop, leaving reassembly to guesswork. `jsonl` also
-fixes the line count but drops the run metadata, the per-source accounting and the warnings,
-since it emits only hosts. One line keeps everything.
+It is not a complete answer either: **Scaleway Cockpit splits log lines at 16384 bytes**, so
+a 296 KB report from a 617-host run still arrived in 19 pieces. They concatenate back
+cleanly, but the conclusion stands — logs are where a run is *read*, not a transport.
+Anything a machine consumes goes to the webhook.
 
 ## 14. Logging and observability
 
