@@ -148,3 +148,24 @@ func TestRedactErrorToleratesNil(t *testing.T) {
 		t.Errorf("RedactError(nil) = %q, want empty", got)
 	}
 }
+
+// The last line of defence before the report leaves the process.
+func TestRedactBytesScrubsARenderedReport(t *testing.T) {
+	r := NewRedactor(map[string]Credential{"c99": {Value: "abcdef1234567890"}})
+	in := []byte(`{"sources":[{"name":"c99","error":"GET https://api.c99.nl/x?key=abcdef1234567890 failed"}]}`)
+
+	got := string(r.RedactBytes(in))
+	if strings.Contains(got, "abcdef1234567890") {
+		t.Errorf("redacted = %q, the credential survived", got)
+	}
+	if !strings.Contains(got, `"name":"c99"`) {
+		t.Errorf("redacted = %q, the surrounding document was damaged", got)
+	}
+}
+
+func TestRedactBytesIsAPassthroughWithoutCredentials(t *testing.T) {
+	in := []byte(`{"a":1}`)
+	if got := NewRedactor(nil).RedactBytes(in); string(got) != string(in) {
+		t.Errorf("RedactBytes = %q, want the input unchanged", got)
+	}
+}

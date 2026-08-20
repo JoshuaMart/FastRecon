@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/pflag"
 
@@ -111,14 +113,6 @@ func run(args []string) int {
 		return exitUsage
 	}
 
-	// The webhook sink lands with the hardening phase. Accepting the flag and
-	// quietly not delivering would look like a successful run to whatever is
-	// waiting for the POST, so refuse it outright.
-	if cfg.WebhookURL != "" {
-		fmt.Fprintln(os.Stderr, "fastrecon: --webhook-url is not part of this build yet (see SPECIFICATIONS.md, phase 6); use --output for now")
-		return exitUsage
-	}
-
 	log, err := logging.New(cfg.LogLevel, cfg.LogFormat)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
@@ -138,7 +132,10 @@ func run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	stages, err := buildStages(ctx, cfg, log)
+	creds := resolveCredentials(cfg, log)
+	redactor := secrets.NewRedactor(creds)
+
+	stages, err := buildStages(ctx, cfg, log, creds, redactor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
 		return exitUsage
@@ -155,9 +152,22 @@ func run(args []string) int {
 		log.Error("render report", "error", err)
 		return exitFatal
 	}
+	data = redactor.RedactBytes(data)
 
-	sinks := buildSinks(cfg)
-	results := sink.DeliverAll(ctx, data, sinks)
+	sinks, err := buildSinks(cfg, log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
+		return exitUsage
+	}
+
+	// Delivery runs on its own context, detached from the run's. A stopped
+	// job arrives as a signal that cancels ctx, and the whole point of
+	// catching it is that the partial report still reaches its destinations —
+	// which a cancelled context would prevent.
+	deliverCtx, cancelDelivery := deliveryContext(cfg)
+	defer cancelDelivery()
+
+	results := sink.DeliverAll(deliverCtx, data, sinks)
 	for _, r := range results {
 		if r.Err != nil {
 			log.Error("delivery failed", "sink", r.Sink, "error", r.Err)
@@ -179,10 +189,25 @@ func run(args []string) int {
 // buildStages wires the stage implementations available in this build. The
 // stages beyond exclusion land in later phases; the pipeline reports the
 // ladder stopping rather than inventing an empty result.
-func buildStages(ctx context.Context, cfg *config.Config, log *slog.Logger) (pipeline.Stages, error) {
+// deliveryContext bounds the report delivery, using the slice of the run
+// budget that was reserved for exactly this.
+func deliveryContext(cfg *config.Config) (context.Context, context.CancelFunc) {
+	budget := time.Duration(float64(cfg.Timeout) * cfg.OutputMargin)
+	if budget <= 0 {
+		budget = 30 * time.Second
+	}
+	return context.WithTimeout(context.WithoutCancel(context.Background()), budget)
+}
+
+// resolveCredentials resolves the source keys once, up front. The values are
+// process-global from here on, so they are settled before any stage exists.
+func resolveCredentials(cfg *config.Config, log *slog.Logger) map[string]secrets.Credential {
 	resolver, err := secrets.NewResolver(cfg.ProviderConfig)
 	if err != nil {
-		return pipeline.Stages{}, err
+		// A provider config that cannot be read is reported by the stage that
+		// needs it; a run without keys is still a run.
+		log.Warn("provider config unusable", "error", err)
+		return nil
 	}
 
 	wanted := cfg.Sources
@@ -193,14 +218,17 @@ func buildStages(ctx context.Context, cfg *config.Config, log *slog.Logger) (pip
 	}
 	creds := resolver.Resolve(wanted)
 	logCredentials(log, cfg.Sources, creds)
+	return creds
+}
 
+func buildStages(ctx context.Context, cfg *config.Config, log *slog.Logger, creds map[string]secrets.Credential, redactor *secrets.Redactor) (pipeline.Stages, error) {
 	enumerator, err := enumerate.NewSubfaster(enumerate.Options{
 		Sources:        cfg.Sources,
 		ExcludeSources: cfg.ExcludeSources,
 		All:            cfg.AllSources,
 		SourceTimeout:  cfg.SourceTimeout,
 		Credentials:    creds,
-		Redactor:       secrets.NewRedactor(creds),
+		Redactor:       redactor,
 		Logger:         log,
 	})
 	if err != nil {
@@ -336,8 +364,8 @@ func listSources() {
 	}
 }
 
-func buildSinks(cfg *config.Config) []sink.Sink {
-	stdout, file, _ := cfg.Sinks()
+func buildSinks(cfg *config.Config, log *slog.Logger) ([]sink.Sink, error) {
+	stdout, file, webhook := cfg.Sinks()
 	var sinks []sink.Sink
 	if stdout {
 		sinks = append(sinks, sink.NewStdout())
@@ -345,5 +373,31 @@ func buildSinks(cfg *config.Config) []sink.Sink {
 	if file {
 		sinks = append(sinks, sink.NewFile(cfg.Output))
 	}
-	return sinks
+	if webhook {
+		w, err := sink.NewWebhook(sink.WebhookOptions{
+			URL:     cfg.WebhookURL,
+			Method:  cfg.WebhookMethod,
+			Headers: cfg.WebhookHeaders,
+			Timeout: cfg.WebhookTimeout,
+			Retries: cfg.WebhookRetries,
+			Logger:  log,
+		})
+		if err != nil {
+			return nil, err
+		}
+		sinks = append(sinks, w)
+		// Header names only: a webhook header is where the bearer token goes.
+		log.Debug("webhook configured", "url", cfg.WebhookURL, "method", cfg.WebhookMethod, "headers", headerNames(cfg.WebhookHeaders))
+	}
+	return sinks, nil
+}
+
+// headerNames lists the configured header names without their values.
+func headerNames(headers []string) []string {
+	out := make([]string, 0, len(headers))
+	for _, h := range headers {
+		name, _, _ := strings.Cut(h, ":")
+		out = append(out, strings.TrimSpace(name))
+	}
+	return out
 }

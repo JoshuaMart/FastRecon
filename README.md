@@ -10,8 +10,8 @@ first; this file is only the quick start.
 
 ## Status
 
-Phase 5 of 8. The whole pipeline runs: `--stages enum`, `resolve`, `ports`
-and `full`.
+Phase 6 of 8. The whole pipeline runs, and its output reaches all three
+sinks.
 
 - passive subdomain enumeration from multiple sources, with per-source
   accounting in the report,
@@ -25,6 +25,8 @@ and `full`.
   one,
 - HTTP probing of the discovered ports, HTTPS-first so the recorded scheme is
   the one that actually worked, with titles, technologies and certificates,
+- delivery to stdout, a file, and a webhook, with retries that distinguish
+  "not now" from "not like this",
 - the CLI, with the full option surface and its precedence rules
   (flag > environment > config file > default),
 - the run report model and its `json` / `jsonl` / `text` renderings,
@@ -33,8 +35,7 @@ and `full`.
   handling, and exit codes,
 - the container image and CI.
 
-What is left is the webhook sink and hardening (phase 6), then the Scaleway
-job and function deployments (phases 7–8). Asking for a
+What is left is the Scaleway job and function deployments (phases 7–8). Asking for a
 wider scope walks the ladder as far as it can, then reports the stage that has
 no implementation and exits 2 — it does not pretend to have found nothing.
 
@@ -62,6 +63,11 @@ make build
 
 # The whole pipeline, ending with HTTP service detection.
 ./bin/fastrecon -d example.com --stages full --format text
+
+# POST the report to an internal API instead of writing it anywhere.
+./bin/fastrecon -d example.com --output "" \
+  --webhook-url https://internal.example.net/hooks/recon \
+  --webhook-header "Authorization: Bearer $TOKEN"
 ```
 
 The default resolver pool is small and deliberate: Cloudflare, Google and

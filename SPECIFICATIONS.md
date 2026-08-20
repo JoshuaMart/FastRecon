@@ -581,8 +581,12 @@ Enforcement and hygiene:
 - The build must never accept credentials as `--build-arg` (they persist in image history).
 - CI runs a secret scanner (gitleaks or equivalent) on the repository and fails the build on
   a hit.
-- The tool **redacts credentials in all output and logs**, including error messages that echo
-  a request URL (c99 puts the key in the query string — this must be scrubbed).
+- The tool **redacts credentials in all output and logs**. Redaction happens where a value
+  enters a message — a source error carrying a request URL, for instance, since c99 puts the
+  key in the query string. The rendered report is then scrubbed once more before it leaves
+  the process, as a last line of defence over whatever was missed.
+- Webhook header **values are never logged**; only their names are, since a webhook header is
+  exactly where a bearer token goes.
 - Startup emits a credential inventory at `info` level: which sources have a key, which do
   not. Values are never logged, not even truncated.
 
@@ -601,11 +605,33 @@ Sinks are independent and can be combined in a single run:
   (`Content-Type: application/json`), unchanged from what the other sinks emit. The target is
   an internal API, not a chat destination, so there is no message formatting and no summary
   variant: one shape, defined in §13.2, for every consumer. Options: `--webhook-method`
-  (default `POST`), `--webhook-header` (repeatable, for auth — e.g. a bearer token or an
-  internal signature header), `--webhook-timeout`, and `--webhook-retries` with exponential
-  backoff on 5xx, 429, and transport errors (never on 4xx, which will not become valid on a
-  retry). A delivery failure sets a non-zero exit code but does not discard the other sinks'
-  output — the report must still reach stdout or the file sink.
+  (default `POST`), `--webhook-header` (repeatable, for auth), `--webhook-timeout`, and
+  `--webhook-retries`. A delivery failure sets a non-zero exit code but does not discard the
+  other sinks' output — the report must still reach stdout or the file sink.
+
+  Retries cover 5xx, 429 and transport errors, with exponential backoff plus jitter so
+  several jobs retrying do not synchronise. A `Retry-After` header is honoured over the
+  computed wait — the endpoint knows better than the schedule — and the whole wait is capped
+  so a long chain cannot outlive its budget. **Every other 4xx is not retried**: the request
+  itself is wrong, most often the credentials or the URL, and repeating it only delays the
+  error.
+
+  The response body is drained but never logged: a webhook target may echo the payload back,
+  and re-logging it would undo the redaction applied upstream.
+
+### 13.4 Delivery is detached from the run
+
+Delivery runs on its own context, derived from `context.WithoutCancel` and bounded by the
+share of the budget reserved by `--output-margin`.
+
+A stopped job arrives as a signal that cancels the run's context. The entire point of
+catching that signal is that the partial report still reaches its destinations — which
+delivering on the cancelled context would prevent. The sinks therefore get a fresh deadline
+of their own.
+
+The file sink writes atomically, except to destinations that are not regular files:
+`/dev/stdout`, `/dev/null` and named pipes cannot be replaced by a rename, and there is
+nothing to make atomic. Those are written through directly.
 
 Formats: `json` (single document, default), `jsonl` (one host per line, stream-friendly for
 large scopes), `text` (human-readable summary).
@@ -668,6 +694,10 @@ large scopes), `text` (human-readable summary).
 
 `completed: false` plus `truncated_by_timeout: true` is how a deadline-truncated run is
 reported — the report is still emitted and still valid.
+
+An operator stopping the job is reported differently: `completed: false` with
+`truncated_by_timeout` left **false**. A consumer may reasonably retry a run that ran out of
+time, and must not retry one somebody stopped on purpose.
 
 A host carries the status of the furthest stage that reached it. In an `enum` scope nothing is
 resolved, so every surviving host is `discovered`: the enumeration result is data in its own

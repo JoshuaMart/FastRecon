@@ -90,3 +90,11 @@ func TestDeliverAllContinuesPastAFailure(t *testing.T) {
 		t.Errorf("error %q does not name the sink that failed", err)
 	}
 }
+
+// A destination that is not a regular file — /dev/stdout, /dev/null, a fifo —
+// cannot be replaced by a rename, and there is nothing to make atomic.
+func TestFileWritesDirectlyToCharacterDevices(t *testing.T) {
+	if err := NewFile("/dev/null").Deliver(context.Background(), []byte("payload")); err != nil {
+		t.Errorf("writing to /dev/null failed: %v", err)
+	}
+}

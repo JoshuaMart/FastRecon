@@ -38,9 +38,21 @@ scw jobs definition update <definition-id> \
 
 The job's stdout is collected as logs (Cockpit). That is fine for reading a run
 and for `--format text`, but it is a log stream, not an artifact another system
-can fetch. A job that has to hand its results to something else sets
-`FASTRECON_WEBHOOK_URL` and posts the report to an internal API — that sink
-lands in phase 6.
+can fetch. A job that has to hand its results to something else posts them:
+
+```sh
+scw jobs definition update <definition-id> \
+  environment-variables.FASTRECON_OUTPUT="" \
+  environment-variables.FASTRECON_WEBHOOK_URL=https://internal.example.net/hooks/recon \
+  environment-variables.FASTRECON_WEBHOOK_HEADER='Authorization: Bearer ...'
+```
+
+`FASTRECON_OUTPUT=""` turns off the stdout sink so the report exists only where
+it was sent. Leave it set to `-` to keep a copy in the logs as well.
+
+Stopping a job sends SIGTERM. FastRecon cancels the run, marks the report
+incomplete, and still delivers it: delivery runs on its own deadline, taken
+from the share of the budget reserved by `--output-margin`.
 
 ### Scheduling
 

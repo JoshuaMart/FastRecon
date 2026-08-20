@@ -225,7 +225,7 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		state.hosts = res.Hosts
 		rep.Sources = res.Sources
 		rep.Stats.Enumerated = len(res.Hosts)
-		p.applyPartial(rep, st, res.Partial)
+		p.applyPartial(ctx, rep, st, res.Partial)
 		return nil
 
 	case stage.Exclude:
@@ -261,7 +261,7 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		}
 		state.found = res.Hosts
 		rep.Hosts = res.Hosts
-		p.applyPartial(rep, st, res.Partial)
+		p.applyPartial(ctx, rep, st, res.Partial)
 		return nil
 
 	case stage.PortScan:
@@ -274,7 +274,7 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		}
 		state.found = res.Hosts
 		rep.Hosts = res.Hosts
-		p.applyPartial(rep, st, res.Partial)
+		p.applyPartial(ctx, rep, st, res.Partial)
 		return nil
 
 	case stage.HTTPProbe:
@@ -287,7 +287,7 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		}
 		state.found = res.Hosts
 		rep.Hosts = res.Hosts
-		p.applyPartial(rep, st, res.Partial)
+		p.applyPartial(ctx, rep, st, res.Partial)
 		return nil
 
 	default:
@@ -299,7 +299,11 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 // stage does not stop the ladder — the later stages still have their own
 // budget and can work on what was found — but the run stops claiming to be
 // complete.
-func (p *Pipeline) applyPartial(rep *report.Report, st stage.Stage, part Partial) {
+//
+// A deadline and an operator stopping the job both cut a stage short, and
+// they are reported differently: a consumer may reasonably retry a run that
+// ran out of time, and must not retry one somebody stopped on purpose.
+func (p *Pipeline) applyPartial(ctx context.Context, rep *report.Report, st stage.Stage, part Partial) {
 	for _, w := range part.Warnings {
 		rep.Warnf("%s", w)
 	}
@@ -307,6 +311,12 @@ func (p *Pipeline) applyPartial(rep *report.Report, st stage.Stage, part Partial
 		return
 	}
 	rep.Run.Completed = false
+
+	if errors.Is(ctx.Err(), context.Canceled) {
+		rep.Warnf("stage %s: run canceled, results are partial", st)
+		p.log.Warn("stage canceled", "stage", string(st))
+		return
+	}
 	rep.Run.TruncatedByTimeout = true
 	rep.Warnf("stage %s: cut short by its deadline, results are partial", st)
 	p.log.Warn("stage truncated", "stage", string(st))

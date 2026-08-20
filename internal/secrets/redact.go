@@ -42,6 +42,18 @@ func (r *Redactor) Redact(s string) string {
 	return queryKeyRE.ReplaceAllString(s, "${1}"+Placeholder)
 }
 
+// RedactBytes scrubs a rendered document. It is the last line of defence
+// before the report leaves the process: everything that reaches the report is
+// meant to be redacted at the point it is created, and this catches whatever
+// was not.
+func (r *Redactor) RedactBytes(data []byte) []byte {
+	if len(r.values) == 0 || len(data) == 0 {
+		return data
+	}
+	out := r.Redact(string(data))
+	return []byte(out)
+}
+
 // RedactError renders an error through the redactor, tolerating a nil error.
 func (r *Redactor) RedactError(err error) string {
 	if err == nil {
