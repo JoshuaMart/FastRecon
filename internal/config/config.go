@@ -51,6 +51,7 @@ type Config struct {
 	ResolverConcurrency int
 	ResolverRetries     int
 	ResolverTimeout     time.Duration
+	WildcardProbes      int
 
 	// Port scan
 	ScanMode        string

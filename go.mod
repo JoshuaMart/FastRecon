@@ -3,11 +3,14 @@ module github.com/JoshuaMart/FastRecon
 go 1.25
 
 require (
+	github.com/projectdiscovery/dnsx v1.2.3
 	github.com/projectdiscovery/gologger v1.1.69
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/net v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+require github.com/projectdiscovery/cdncheck v1.2.37 // indirect
 
 require (
 	aead.dev/minisign v0.2.0 // indirect
@@ -56,7 +59,7 @@ require (
 	github.com/melvinsh/subfaster/v2 v2.18.0
 	github.com/mholt/archives v0.1.5 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
-	github.com/miekg/dns v1.1.62 // indirect
+	github.com/miekg/dns v1.1.62
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/minio/minlz v1.0.1 // indirect
 	github.com/minio/selfupdate v0.6.1-0.20230907112617-f11e74f84ca7 // indirect
@@ -75,7 +78,7 @@ require (
 	github.com/projectdiscovery/machineid v0.0.0-20250715113114-c77eb3567582 // indirect
 	github.com/projectdiscovery/networkpolicy v0.1.38 // indirect
 	github.com/projectdiscovery/ratelimit v0.0.87 // indirect
-	github.com/projectdiscovery/retryabledns v1.0.115 // indirect
+	github.com/projectdiscovery/retryabledns v1.0.115
 	github.com/projectdiscovery/retryablehttp-go v1.3.11 // indirect
 	github.com/projectdiscovery/utils v0.11.1 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect

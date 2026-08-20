@@ -36,8 +36,9 @@ func RegisterFlags(fs *pflag.FlagSet) {
 
 	fs.StringArray("resolvers", nil, "DNS resolvers to use (repeatable); empty uses the bundled set")
 	fs.Int("resolver-concurrency", 100, "concurrent DNS queries")
-	fs.Int("resolver-retries", 2, "retries per DNS query")
+	fs.Int("resolver-retries", 2, "extra attempts per DNS query after the first")
 	fs.Duration("resolver-timeout", 5*time.Second, "timeout per DNS query")
+	fs.Int("wildcard-probes", 3, "random names resolved per parent domain to detect a wildcard record")
 
 	fs.String("scan-mode", ScanModeConnect, fmt.Sprintf("port scan mode: %s (unprivileged) or %s (needs CAP_NET_RAW)", ScanModeConnect, ScanModeSYN))
 	fs.String("ports", "top-100", "ports to scan: top-100, top-1000, web, or a list like 80,443,8000-8100")

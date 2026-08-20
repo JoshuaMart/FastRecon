@@ -58,7 +58,7 @@ func (f fakeExcluder) Filter(hosts []string) Filtered {
 type fakeResolver struct{ live []string }
 
 func (fakeResolver) Name() string { return "fake" }
-func (f fakeResolver) Resolve(_ context.Context, hosts []string) ([]report.Host, error) {
+func (f fakeResolver) Resolve(_ context.Context, hosts []string) (Resolution, error) {
 	out := make([]report.Host, 0, len(hosts))
 	for _, h := range hosts {
 		status, reason := report.StatusDead, report.ReasonNXDomain
@@ -70,7 +70,7 @@ func (f fakeResolver) Resolve(_ context.Context, hosts []string) ([]report.Host,
 		}
 		out = append(out, report.Host{Host: h, Status: status, Reason: reason})
 	}
-	return out, nil
+	return Resolution{Hosts: out}, nil
 }
 
 func testConfig(t *testing.T, scope stage.Scope) *config.Config {
@@ -221,6 +221,43 @@ func TestRunCarriesConfigWarningsIntoTheReport(t *testing.T) {
 	if len(rep.Warnings) != 1 || !strings.Contains(rep.Warnings[0], "porst") {
 		t.Errorf("warnings = %v, want the configuration warning carried through", rep.Warnings)
 	}
+}
+
+// A stage that finished but was cut short must not leave the run claiming to
+// be complete.
+func TestTruncatedStageMarksTheRunIncomplete(t *testing.T) {
+	cfg := testConfig(t, stage.ScopeEnum)
+	stages := Stages{
+		Enumerator: truncatingEnumerator{},
+		Excluder:   fakeExcluder{},
+	}
+	rep, err := New(cfg, stages, logging.Discard()).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Run.Completed {
+		t.Error("a truncated stage must clear completed")
+	}
+	if !rep.Run.TruncatedByTimeout {
+		t.Error("truncated_by_timeout not set")
+	}
+	// The hosts it did find must survive.
+	if len(rep.Hosts) != 1 {
+		t.Errorf("hosts = %v, want the partial result kept", rep.Hosts)
+	}
+	if len(rep.Warnings) == 0 {
+		t.Error("a truncated stage must leave a warning in the report")
+	}
+}
+
+type truncatingEnumerator struct{}
+
+func (truncatingEnumerator) Name() string { return "truncating" }
+func (truncatingEnumerator) Enumerate(context.Context, string) (Enumeration, error) {
+	e := Enumeration{Hosts: []string{"a.example.com"}}
+	e.Truncated = true
+	e.Warnings = []string{"source crt: deadline reached"}
+	return e, nil
 }
 
 func TestRunCanceledByContext(t *testing.T) {

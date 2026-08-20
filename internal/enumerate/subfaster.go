@@ -139,10 +139,12 @@ func (s *Subfaster) Enumerate(ctx context.Context, domain string) (pipeline.Enum
 	}
 	sort.Strings(hosts)
 
+	timedOut := ctx.Err() != nil
 	out := pipeline.Enumeration{
 		Hosts:   hosts,
-		Sources: s.sourceStatuses(agent.GetStatistics(), errsBySource, ctx.Err() != nil),
+		Sources: s.sourceStatuses(agent.GetStatistics(), errsBySource, timedOut),
 	}
+	out.Truncated = timedOut
 	if outOfScope > 0 {
 		s.opts.Logger.Debug("results dropped", "reason", "out of scope or malformed", "count", outOfScope)
 	}

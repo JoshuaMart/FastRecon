@@ -303,19 +303,49 @@ Resolution splits in-scope hosts into **live** and **dead**.
 
 - Engine: **`dnsx` as a Go library** — pure Go, unprivileged, does its own concurrency and
   retries. No `massdns`/`puredns` binary is required in the image.
-- Optional escape hatch: `--resolver-engine=external --resolver-cmd=...` to shell out to
-  `puredns`/`massdns` when the operator has them installed locally and wants their throughput.
-  Not available in the default container image.
 - Configurable: resolver list (`--resolvers`, default a bundled public set), concurrency,
-  retries, per-query timeout, record types (A, AAAA, CNAME).
-- **Wildcard DNS detection is mandatory.** A domain resolving `*.example.com` to a single IP
-  would otherwise flood the live set with junk. Random-subdomain probing establishes the
-  wildcard IP set; hosts resolving only to that set are marked `wildcard` and excluded from
-  the live set (still listed in the report under their own bucket).
+  extra attempts per query, per-query timeout. Records queried: A, AAAA, CNAME.
+- A resolver given without a port gets `:53`, so `1.1.1.1` and `1.1.1.1:53` both work.
 
 A host is **live** if it resolves to at least one address and is not a wildcard artifact.
-Everything else is **dead**, with a reason (`nxdomain`, `no_answer`, `timeout`, `wildcard`).
-Dead hosts stay in the report — a dangling CNAME is a finding, not noise.
+Everything else is **dead**, with a reason (`nxdomain`, `no_answer`, `timeout`). Dead hosts
+stay in the report — a dangling CNAME is a finding, not noise, so the alias target is kept
+alongside the verdict.
+
+`nxdomain` and `no_answer` are deliberately distinct: a name that exists but has no address
+(MX or TXT records only) is not the same as a name that does not exist.
+
+Hosts the stage never reached before its deadline are reported as `discovered`, not as dead.
+Inventing a verdict for a host that was never queried would be worse than admitting the gap.
+
+### 8.1 Wildcard DNS detection
+
+**Mandatory, and per parent domain.** A domain resolving `*.example.com` to a single address
+would otherwise flood the live set with junk, and a wildcard on `*.dev.example.com` is just as
+capable of it as one on the apex — only the parent it sits on can reveal it.
+
+- Every parent domain appearing in the host list is probed, plus the root, with random names.
+- A parent is a wildcard only when a **majority** of its probes answer, so one flaky lookup
+  cannot condemn a whole branch. The answers of all probes are unioned, which covers wildcards
+  that round-robin between addresses.
+- A host is a wildcard artifact when **all** of its addresses belong to a parent's wildcard
+  set, or its CNAME target matches the wildcard's. A host answering with the wildcard address
+  *and* one of its own is a real host that shares infrastructure.
+- Wildcard hosts are marked `wildcard`, excluded from the live set, and **kept in the report**
+  with their answers.
+
+Known limitation: a genuine host that resolves to exactly the wildcard's addresses is
+indistinguishable from an artifact at the DNS level — `pages.github.io` behind `*.github.io`
+is a real example. This is why such hosts are reported rather than dropped: the classification
+is recoverable by whatever consumes the report, but deleted data is not.
+
+### 8.2 Not implemented
+
+An external resolver engine (`--resolver-engine=external` shelling out to `puredns`/`massdns`
+for their throughput) is not built. dnsx covers the requirement in-process, and shelling out
+would mean parsing another tool's output format and shipping its binary — neither of which the
+default container image should carry. If throughput ever becomes the constraint, this is where
+it gets revisited.
 
 ## 9. Stage 4 — Port scanning
 
@@ -409,6 +439,8 @@ Optional YAML, selected by `--config` / `FASTRECON_CONFIG`. Never read from an i
 | `--exclude-sources` | `FASTRECON_EXCLUDE_SOURCES` | — | sources to subtract from the selection |
 | `--all-sources` | `FASTRECON_ALL_SOURCES` | `false` | query every source the engine knows |
 | `--source-timeout` | `FASTRECON_SOURCE_TIMEOUT` | `30s` | time ceiling for a single source |
+| `--resolvers` | `FASTRECON_RESOLVERS` | bundled set | DNS resolvers to use |
+| `--wildcard-probes` | `FASTRECON_WILDCARD_PROBES` | `3` | random names probed per parent domain |
 | `--listen` (serve) | `FASTRECON_LISTEN` | `:8080` | HTTP bind address in function mode |
 | `--api-token` (serve) | `FASTRECON_API_TOKEN` | — | shared token required by the handler |
 

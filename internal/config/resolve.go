@@ -51,6 +51,7 @@ func Load(fs *pflag.FlagSet) (*Config, error) {
 	cfg.ResolverConcurrency = l.int("resolver-concurrency")
 	cfg.ResolverRetries = l.int("resolver-retries")
 	cfg.ResolverTimeout = l.dur("resolver-timeout")
+	cfg.WildcardProbes = l.int("wildcard-probes")
 
 	cfg.ScanMode = l.str("scan-mode")
 	cfg.Ports = l.str("ports")

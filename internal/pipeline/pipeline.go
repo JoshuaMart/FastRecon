@@ -18,14 +18,30 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/version"
 )
 
+// Partial is embedded by every stage result. A stage can finish without
+// having been exhaustive — a source timed out, half the hosts were resolved
+// before the budget ran out — and that has to reach the report, because a
+// truncated result that claims to be complete is worse than no result.
+type Partial struct {
+	// Warnings are non-fatal problems worth putting in the report.
+	Warnings []string
+	// Truncated marks a stage cut short by its deadline.
+	Truncated bool
+}
+
 // Enumeration is what an Enumerator produces: the hosts it found, plus the
 // per-source accounting that makes a silently empty source visible.
 type Enumeration struct {
+	Partial
 	Hosts   []string
 	Sources []report.Source
-	// Warnings are non-fatal problems worth putting in the report — a source
-	// that failed or was throttled degrades a run without ending it.
-	Warnings []string
+}
+
+// Resolution is what a Resolver produces: every host it was given, each with
+// its verdict. Dead hosts are kept — a dangling CNAME is a finding, not noise.
+type Resolution struct {
+	Partial
+	Hosts []report.Host
 }
 
 // Filtered is the outcome of applying the exclusion patterns.
@@ -51,7 +67,7 @@ type Excluder interface {
 // Resolver splits hosts into live and dead.
 type Resolver interface {
 	Name() string
-	Resolve(ctx context.Context, hosts []string) ([]report.Host, error)
+	Resolve(ctx context.Context, hosts []string) (Resolution, error)
 }
 
 // PortScanner enriches live hosts with their open ports.
@@ -195,9 +211,7 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		state.hosts = res.Hosts
 		rep.Sources = res.Sources
 		rep.Stats.Enumerated = len(res.Hosts)
-		for _, w := range res.Warnings {
-			rep.Warnf("%s", w)
-		}
+		p.applyPartial(rep, st, res.Partial)
 		return nil
 
 	case stage.Exclude:
@@ -227,12 +241,13 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		if p.stages.Resolver == nil {
 			return ErrNoImplementation
 		}
-		hosts, err := p.stages.Resolver.Resolve(ctx, state.hosts)
+		res, err := p.stages.Resolver.Resolve(ctx, state.hosts)
 		if err != nil {
 			return err
 		}
-		state.found = hosts
-		rep.Hosts = hosts
+		state.found = res.Hosts
+		rep.Hosts = res.Hosts
+		p.applyPartial(rep, st, res.Partial)
 		return nil
 
 	case stage.PortScan:
@@ -262,6 +277,23 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 	default:
 		return errors.New("unknown stage " + string(st))
 	}
+}
+
+// applyPartial folds a stage's non-fatal outcome into the report. A truncated
+// stage does not stop the ladder — the later stages still have their own
+// budget and can work on what was found — but the run stops claiming to be
+// complete.
+func (p *Pipeline) applyPartial(rep *report.Report, st stage.Stage, part Partial) {
+	for _, w := range part.Warnings {
+		rep.Warnf("%s", w)
+	}
+	if !part.Truncated {
+		return
+	}
+	rep.Run.Completed = false
+	rep.Run.TruncatedByTimeout = true
+	rep.Warnf("stage %s: cut short by its deadline, results are partial", st)
+	p.log.Warn("stage truncated", "stage", string(st))
 }
 
 // stop records why the ladder ended early. The report stays valid; only its

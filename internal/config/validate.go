@@ -50,6 +50,7 @@ func (c *Config) Validate() error {
 		v    int
 	}{
 		{"resolver-concurrency", c.ResolverConcurrency},
+		{"wildcard-probes", c.WildcardProbes},
 		{"scan-concurrency", c.ScanConcurrency},
 		{"probe-concurrency", c.ProbeConcurrency},
 	} {

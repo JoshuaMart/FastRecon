@@ -10,12 +10,14 @@ first; this file is only the quick start.
 
 ## Status
 
-Phase 2 of 8. `--stages enum` is fully usable:
+Phase 3 of 8. `--stages enum` and `--stages resolve` are fully usable:
 
 - passive subdomain enumeration from multiple sources, with per-source
   accounting in the report,
 - exclusion patterns — exact, wildcard and regex — applied before any network
   activity touches a host,
+- DNS resolution splitting live from dead hosts, with per-parent wildcard
+  detection so a `*.example.com` record cannot flood the live set,
 - the CLI, with the full option surface and its precedence rules
   (flag > environment > config file > default),
 - the run report model and its `json` / `jsonl` / `text` renderings,
@@ -24,7 +26,7 @@ Phase 2 of 8. `--stages enum` is fully usable:
   handling, and exit codes,
 - the container image and CI.
 
-Resolution, port scanning and HTTP probing land in phases 3–5. Asking for a
+Port scanning and HTTP probing land in phases 4–5. Asking for a
 wider scope walks the ladder as far as it can, then reports the stage that has
 no implementation and exits 2 — it does not pretend to have found nothing.
 
@@ -40,6 +42,9 @@ make build
 
 # Which sources exist, and which need a key.
 ./bin/fastrecon sources
+
+# Enumerate, then split live hosts from dead ones.
+./bin/fastrecon -d example.com --stages resolve --format text
 ```
 
 ```sh

@@ -20,8 +20,10 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/exclude"
 	"github.com/JoshuaMart/FastRecon/internal/logging"
 	"github.com/JoshuaMart/FastRecon/internal/pipeline"
+	"github.com/JoshuaMart/FastRecon/internal/resolve"
 	"github.com/JoshuaMart/FastRecon/internal/secrets"
 	"github.com/JoshuaMart/FastRecon/internal/sink"
+	"github.com/JoshuaMart/FastRecon/internal/stage"
 	"github.com/JoshuaMart/FastRecon/internal/version"
 )
 
@@ -207,7 +209,27 @@ func buildStages(cfg *config.Config, log *slog.Logger) (pipeline.Stages, error) 
 		return pipeline.Stages{}, fmt.Errorf("invalid exclusions:\n%w", err)
 	}
 
-	return pipeline.Stages{Enumerator: enumerator, Excluder: excluder}, nil
+	stages := pipeline.Stages{Enumerator: enumerator, Excluder: excluder}
+
+	// Built only when the scope reaches it: a resolver constructed for an
+	// enumeration-only run would open sockets nothing asked for.
+	if cfg.Scope.Includes(stage.Resolve) {
+		resolver, err := resolve.New(resolve.Options{
+			Domain:         cfg.Domain,
+			Resolvers:      cfg.Resolvers,
+			Concurrency:    cfg.ResolverConcurrency,
+			Retries:        cfg.ResolverRetries,
+			Timeout:        cfg.ResolverTimeout,
+			WildcardProbes: cfg.WildcardProbes,
+			Logger:         log,
+		})
+		if err != nil {
+			return pipeline.Stages{}, err
+		}
+		stages.Resolver = resolver
+	}
+
+	return stages, nil
 }
 
 // logCredentials reports which sources have a key and where it came from.
