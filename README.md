@@ -2,16 +2,13 @@
 
 Attack-surface discovery for a domain: passive subdomain enumeration, exclusion
 filtering, live/dead separation, port scanning, and HTTP probing — as a single
-static binary that runs the same way locally, in Docker, in a serverless job,
-and behind a serverless function.
+static binary that runs the same way locally, in Docker, as a serverless job,
+and — through `fastrecon serve` — behind an HTTP endpoint.
 
 The design is specified in **[SPECIFICATIONS.md](SPECIFICATIONS.md)**. Read that
 first; this file is only the quick start.
 
-## Status
-
-Phase 6 of 8. The whole pipeline runs, and its output reaches all three
-sinks.
+## What it does
 
 - passive subdomain enumeration from multiple sources, with per-source
   accounting in the report,
@@ -27,17 +24,12 @@ sinks.
   the one that actually worked, with titles, technologies and certificates,
 - delivery to stdout, a file, and a webhook, with retries that distinguish
   "not now" from "not like this",
-- the CLI, with the full option surface and its precedence rules
-  (flag > environment > config file > default),
-- the run report model and its `json` / `jsonl` / `text` renderings,
-- the stdout and file sinks,
+- `fastrecon serve`, the same pipeline behind an authenticated HTTP endpoint,
 - pipeline orchestration: the stage ladder, deadline budgeting, truncation
-  handling, and exit codes,
-- the container image and CI.
+  handling, and exit codes.
 
-What is left is the Scaleway job and function deployments (phases 7–8). Asking for a
-wider scope walks the ladder as far as it can, then reports the stage that has
-no implementation and exits 2 — it does not pretend to have found nothing.
+Deploying it on Scaleway is covered in
+[deploy/scaleway](deploy/scaleway/README.md).
 
 ## Quick start
 
@@ -63,6 +55,11 @@ make build
 
 # The whole pipeline, ending with HTTP service detection.
 ./bin/fastrecon -d example.com --stages full --format text
+
+# Serve the same pipeline over HTTP.
+./bin/fastrecon serve --api-token "$TOKEN"
+curl -H "Authorization: Bearer $TOKEN" \
+  -d '{"domain":"example.com","stages":"enum"}' localhost:8080/run
 
 # POST the report to an internal API instead of writing it anywhere.
 ./bin/fastrecon -d example.com --output "" \
@@ -94,6 +91,9 @@ Every option is settable three ways, and the names are mechanically related:
 Precedence is `flag > environment > config file > default`. Run
 `fastrecon --help` for the full list, which is generated from the flag
 definitions and is therefore always current.
+
+Report formats: `json` (indented, the default), `json-compact` (the same
+document on one line, for log sinks), `jsonl` (one host per line), and `text`.
 
 The scope of a run is one value:
 
@@ -133,7 +133,7 @@ string.
 | 1 | invalid configuration or usage |
 | 2 | report emitted, but the run did not finish its scope |
 | 3 | report produced, at least one destination failed |
-| 4 | fatal error, no report produced |
+| 4 | fatal error, no report produced — including a transient failure such as an unreachable resolver list |
 
 ## Development
 
