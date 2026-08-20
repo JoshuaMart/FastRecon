@@ -1,0 +1,24 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose
+    - errorlint
+    - misspell
+    - revive
+    - unconvert
+    - usestdlibvars
+  settings:
+    revive:
+      rules:
+        - name: error-strings
+        - name: context-as-argument
+  exclusions:
+    rules:
+      # Table-driven tests read better without a comment on every helper.
+      - path: _test\.go
+        linters: [revive]
+
+formatters:
+  enable:
+    - gofmt

@@ -1,91 +1,150 @@
-# ⚡FastRecon
+# FastRecon
 
-FastRecon is a fast and simple tool for discovering subdomains of a target domain. It is designed to be non-exhaustive and is not intended to be the most complete solution, but it is ideal for quickly identifying subdomains.
+Attack-surface discovery for a domain: passive subdomain enumeration, exclusion
+filtering, live/dead separation, port scanning, and HTTP probing — as a single
+static binary that runs the same way locally, in Docker, in a serverless job,
+and behind a serverless function.
 
-  * Fast and efficient subdomain discovery
-  * Compatible with Go Serverless functions
-  * Uses popular open source tools such as [Subfinder](https://github.com/projectdiscovery/subfinder), [PureDNS](https://github.com/d3mondev/puredns), [MassDNS](https://github.com/blechschmidt/massdns) & [HTTPX](https://github.com/projectdiscovery/httpx)
-  * Returns results in JSON format for easy integration with other tools
-  * Supports raw output mode for simple domain lists
+The design is specified in **[SPECIFICATIONS.md](SPECIFICATIONS.md)**. Read that
+first; this file is only the quick start.
 
-When used in a serverless function, the binaries must also be joined with the Go code.
+## Status
 
-> [!IMPORTANT]
-> When Fastrecon is run in a Serverless function, the tool is not designed to be run on targets containing a large number of sub-domains (such as Google or Apple).
+Phase 6 of 8. The whole pipeline runs, and its output reaches all three
+sinks.
 
-The Docker image produced is very light despite the many embedded binaries, making it perfect for Serverless use.
+- passive subdomain enumeration from multiple sources, with per-source
+  accounting in the report,
+- exclusion patterns — exact, wildcard and regex — applied before any network
+  activity touches a host,
+- DNS resolution splitting live from dead hosts, with per-parent wildcard
+  detection so a `*.example.com` record cannot flood the live set,
+- resolver pools from a file or an https URL, health-checked before the run,
+- unprivileged TCP connect port scanning, rate-limited, with CDN and WAF
+  determination so a narrowed port list is never mistaken for an exhaustive
+  one,
+- HTTP probing of the discovered ports, HTTPS-first so the recorded scheme is
+  the one that actually worked, with titles, technologies and certificates,
+- delivery to stdout, a file, and a webhook, with retries that distinguish
+  "not now" from "not like this",
+- the CLI, with the full option surface and its precedence rules
+  (flag > environment > config file > default),
+- the run report model and its `json` / `jsonl` / `text` renderings,
+- the stdout and file sinks,
+- pipeline orchestration: the stage ladder, deadline budgeting, truncation
+  handling, and exit codes,
+- the container image and CI.
 
-![Docker image](https://zupimages.net/up/24/07/evjx.png)
+What is left is the Scaleway job and function deployments (phases 7–8). Asking for a
+wider scope walks the ladder as far as it can, then reports the stage that has
+no implementation and exits 2 — it does not pretend to have found nothing.
 
-## Build, launch the container (Go version)
+## Quick start
 
-> [!NOTE]
-> Fill in the `subfinder.yaml` file first with your API keys for best results.
+```sh
+make build
+./bin/fastrecon -d example.com --stages enum
 
-```
-docker build . -t fastrecon
-docker run -p 8080:8080 fastrecon
-```
+# With exclusions, as text.
+./bin/fastrecon -d example.com --stages enum --format text \
+  --exclude '*.dev.example.com' --exclude 're:^staging[0-9]*\.'
 
-## Usage
+# Which sources exist, and which need a key.
+./bin/fastrecon sources
 
-Make HTTP requests to `/?domain=[target_domain]` with optional parameters.
+# Enumerate, then split live hosts from dead ones.
+./bin/fastrecon -d example.com --stages resolve --format text
 
-### Parameters
+# Bring your own resolver pool, from a file or a URL.
+./bin/fastrecon -d example.com --stages resolve --resolvers-file ./resolvers.txt
 
-- `domain` (required): The target domain to scan
-- `raw` (optional): Set to `true` to return only the list of discovered subdomains without additional metadata
+# Enumerate, resolve, then scan the web ports of the live hosts.
+./bin/fastrecon -d example.com --stages ports --ports web --format text
 
-### Examples
+# The whole pipeline, ending with HTTP service detection.
+./bin/fastrecon -d example.com --stages full --format text
 
-**Full scan with detailed JSON output:**
-```bash
-curl "http://localhost:8080/?domain=example.com"
-```
-
-**Raw output (domains only):**
-```bash
-curl "http://localhost:8080/?domain=example.com&raw=true"
-```
-
-### Output Formats
-
-#### Full JSON Output (default)
-Returns a JSON array with detailed information about each subdomain:
-
-```json
-[
-  {
-    "url": "https://example.com",
-    "status_code": 200,
-    "content_length": 1234,
-    "content_type": "text/html",
-    "title": "Example Domain",
-    "a": ["93.184.216.34"],
-    "cname": null,
-    "cdn": false,
-    "tech": ["Apache HTTP Server:2.4.41"],
-    "header": {
-      "content_type": "text/html; charset=UTF-8",
-      "server": "Apache/2.4.41 (Ubuntu)"
-    }
-  }
-]
+# POST the report to an internal API instead of writing it anywhere.
+./bin/fastrecon -d example.com --output "" \
+  --webhook-url https://internal.example.net/hooks/recon \
+  --webhook-header "Authorization: Bearer $TOKEN"
 ```
 
-#### Raw Output (raw=true)
-Returns a simple list of discovered subdomains:
+The default resolver pool is small and deliberate: Cloudflare, Google and
+Quad9's unfiltered endpoints. Large public lists are supported but are the
+wrong tool for this workload — see `SPECIFICATIONS.md` §8, which has the
+measurements.
 
+```sh
+# Same thing, containerised.
+make docker
+docker run --rm -e CHAOS_API_KEY fastrecon:dev -d example.com --stages enum
 ```
-https://example.com
-https://www.example.com
-https://api.example.com
-https://mail.example.com
+
+## Configuration
+
+Every option is settable three ways, and the names are mechanically related:
+
+| | |
+|---|---|
+| flag | `--scan-mode connect` |
+| environment | `FASTRECON_SCAN_MODE=connect` |
+| config file | `scan-mode: connect` |
+
+Precedence is `flag > environment > config file > default`. Run
+`fastrecon --help` for the full list, which is generated from the flag
+definitions and is therefore always current.
+
+The scope of a run is one value:
+
+```sh
+fastrecon -d example.com --stages enum     # enumeration only
+fastrecon -d example.com --stages resolve  # + live/dead separation
+fastrecon -d example.com --stages ports    # + port scan
+fastrecon -d example.com --stages full     # + HTTP probe (default)
 ```
 
-## Performance
+## Credentials
 
-Example of resources consumption in a Serverless Container with 560mVCPU & 512MB RAM:
-  * 220 seconds with a cold start for a recon on a domain with about 500 subdomains
+API keys are never baked into the image. Provide them at runtime, in this order
+of precedence:
 
-![Resources Consumption](https://zupimages.net/up/24/07/7lsp.png)
+1. `FASTRECON_KEY_<SOURCE>` — the namespaced environment variable,
+2. `<SOURCE>_API_KEY` — the upstream spelling (`CHAOS_API_KEY`, …),
+3. a provider config file mounted into the container, pointed at with
+   `--provider-config` (subfinder/subfaster format),
+4. `FASTRECON_KEY_<SOURCE>_FILE` — a path to a file holding the key, for
+   Docker and Kubernetes secret mounts.
+
+The default sources are `chaos`, `securitytrails`, `c99` (all key-required),
+plus `submd` and `crt` which work without one. A run with no credentials at all
+still returns data from the last two; the others are reported as
+`skipped_no_key` rather than silently dropped.
+
+Credential values never appear in the logs or the report. Error messages are
+scrubbed, including request URLs — some sources put the key in the query
+string.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | run completed, report emitted |
+| 1 | invalid configuration or usage |
+| 2 | report emitted, but the run did not finish its scope |
+| 3 | report produced, at least one destination failed |
+| 4 | fatal error, no report produced |
+
+## Development
+
+```sh
+make test    # go test -race ./...
+make lint    # golangci-lint
+make cover   # coverage summary
+make static  # assert the binary is still statically linked
+```
+
+`make static` is not optional busywork: the runtime image is
+`distroless/static`, which has no dynamic loader. A dependency that reaches
+libc through `dlopen` produces a binary that builds fine, passes every test,
+and then fails at `exec` inside the container. CI runs the same check.
