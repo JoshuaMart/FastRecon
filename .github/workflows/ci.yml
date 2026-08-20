@@ -100,7 +100,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
+          # arm64 as well as the amd64 the serverless runtimes use: the
+          # documented `docker run` is the first thing a reader tries, and it
+          # fails outright on Apple Silicon without a matching manifest. The
+          # builder cross-compiles, so this costs a compile, not emulation.
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

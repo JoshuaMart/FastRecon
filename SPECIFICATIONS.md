@@ -822,8 +822,10 @@ scheduler will ever retry.
 - Static build (`CGO_ENABLED=0`), with CA certificates and `/etc/passwd` from distroless.
 - Runs as a non-root user; no capabilities added; no privileged requirement.
 - Entrypoint is the binary, so job args map straight onto CLI flags.
-- `linux/amd64` only for now — it is the target job and function runtime. The build is set up
-  so a second architecture is a matrix entry, not a rewrite.
+- `linux/amd64` and `linux/arm64`. The serverless runtimes only need the first, but the
+  documented `docker run` is the first thing a reader tries and it fails outright on Apple
+  Silicon without a matching manifest. The builder cross-compiles from the native platform,
+  so the second architecture costs a compile rather than emulation.
 - Version, commit, and build date injected via `-ldflags`, surfaced by `fastrecon version`
   and in the report's `run.version`.
 

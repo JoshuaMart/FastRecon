@@ -1,84 +1,187 @@
-# FastRecon
+![Image](https://github.com/user-attachments/assets/65bada68-8575-4250-a504-d179604e6fb6)
 
-Attack-surface discovery for a domain: passive subdomain enumeration, exclusion
-filtering, live/dead separation, port scanning, and HTTP probing — as a single
-static binary that runs the same way locally, in Docker, as a serverless job,
-and — through `fastrecon serve` — behind an HTTP endpoint.
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green"></a>
+  <img src="https://img.shields.io/badge/docker-supported-blue?logo=docker">
+  <img src="https://img.shields.io/badge/golang-1.26-blue?logo=go">
+</p>
 
-The design is specified in **[SPECIFICATIONS.md](SPECIFICATIONS.md)**. Read that
-first; this file is only the quick start.
+FastRecon is a fast and simple attack-surface discovery tool. It takes a domain
+and returns the hosts that answer, the ports they expose and the HTTP services
+behind them, as one JSON report.
 
-## What it does
+It is designed to be non-exhaustive and is not intended to be the most complete
+solution, but it is ideal for quickly mapping what a domain exposes — and for
+keeping that map current on a schedule, from a serverless job, with no machine
+to maintain. One static binary, no external tools to install, and nothing that
+needs root.
 
-- passive subdomain enumeration from multiple sources, with per-source
-  accounting in the report,
-- exclusion patterns — exact, wildcard and regex — applied before any network
-  activity touches a host,
-- DNS resolution splitting live from dead hosts, with per-parent wildcard
-  detection so a `*.example.com` record cannot flood the live set,
-- resolver pools from a file or an https URL, health-checked before the run,
-- unprivileged TCP connect port scanning, rate-limited, with CDN and WAF
-  determination so a narrowed port list is never mistaken for an exhaustive
-  one,
-- HTTP probing of the discovered ports, HTTPS-first so the recorded scheme is
-  the one that actually worked, with titles, technologies and certificates,
-- delivery to stdout, a file, and a webhook, with retries that distinguish
-  "not now" from "not like this",
-- `fastrecon serve`, the same pipeline behind an authenticated HTTP endpoint,
-- pipeline orchestration: the stage ladder, deadline budgeting, truncation
-  handling, and exit codes.
+```
+input (domain + exclusions)
+      │
+      ▼
+ [1] ENUMERATE ──► raw subdomains (multi-source, deduplicated)
+      │
+      ▼
+ [2] EXCLUDE ────► in-scope subdomains
+      │
+      ▼
+ [3] RESOLVE ────► live hosts (with A/AAAA/CNAME) + dead hosts
+      │
+      ▼
+ [4] PORTSCAN ───► open ports per live host
+      │
+      ▼
+ [5] HTTP PROBE ─► HTTP(S) services with correct scheme, status, title, tech
+      │
+      ▼
+   report (JSON) ──► stdout | file | webhook
+```
 
-Deploying it on Scaleway is covered in
-[deploy/scaleway](deploy/scaleway/README.md).
+Every stage is optional from the top down, so a run costs only what you ask of
+it — see [Choosing a scope](#choosing-a-scope).
 
 ## Quick start
 
 ```sh
-make build
-./bin/fastrecon -d example.com --stages enum
+# Passive only: nothing is sent to the target.
+docker run --rm ghcr.io/joshuamart/fastrecon:main -d example.com --stages enum
 
-# With exclusions, as text.
-./bin/fastrecon -d example.com --stages enum --format text \
-  --exclude '*.dev.example.com' --exclude 're:^staging[0-9]*\.'
-
-# Which sources exist, and which need a key.
-./bin/fastrecon sources
-
-# Enumerate, then split live hosts from dead ones.
-./bin/fastrecon -d example.com --stages resolve --format text
-
-# Bring your own resolver pool, from a file or a URL.
-./bin/fastrecon -d example.com --stages resolve --resolvers-file ./resolvers.txt
-
-# Enumerate, resolve, then scan the web ports of the live hosts.
-./bin/fastrecon -d example.com --stages ports --ports web --format text
-
-# The whole pipeline, ending with HTTP service detection.
-./bin/fastrecon -d example.com --stages full --format text
-
-# Serve the same pipeline over HTTP.
-./bin/fastrecon serve --api-token "$TOKEN"
-curl -H "Authorization: Bearer $TOKEN" \
-  -d '{"domain":"example.com","stages":"enum"}' localhost:8080/run
-
-# POST the report to an internal API instead of writing it anywhere.
-./bin/fastrecon -d example.com --output "" \
-  --webhook-url https://internal.example.net/hooks/recon \
-  --webhook-header "Authorization: Bearer $TOKEN"
+# The whole pipeline, as a human-readable summary.
+docker run --rm ghcr.io/joshuamart/fastrecon:main \
+  -d example.com --stages full --ports web --format text
 ```
 
-The default resolver pool is small and deliberate: Cloudflare, Google and
-Quad9's unfiltered endpoints. Large public lists are supported but are the
-wrong tool for this workload — see `SPECIFICATIONS.md` §8, which has the
-measurements.
+Or build it:
 
 ```sh
-# Same thing, containerised.
-make docker
-docker run --rm -e CHAOS_API_KEY fastrecon:dev -d example.com --stages enum
+make build
+./bin/fastrecon -d example.com --stages full --format text
 ```
 
+No API key is required to start: two of the five default sources work without
+one, so a first run returns data immediately. Adding keys widens it — see
+[Credentials](#credentials).
+
+## Choosing a scope
+
+The pipeline is a ladder. One value selects how far up it goes, and each rung
+implies the ones below it.
+
+| `--stages` | Runs | Sends to the target |
+|---|---|---|
+| `enum` | enumeration + exclusions | nothing |
+| `resolve` | + DNS resolution | nothing |
+| `ports` | + port scan | TCP connections |
+| `full` | + HTTP probe (default) | TCP + HTTP requests |
+
+`enum` and `resolve` are entirely passive from the target's point of view: the
+sources and the DNS resolvers are third parties.
+
+Arbitrary combinations are deliberately not expressible. Probing without a port
+scan would mean inventing a default port set, which looks like discovery but is
+an assumption.
+
+## Example report
+
+<details>
+<summary>A run in JSON (abridged)</summary>
+
+```json
+{
+  "schema_version": "1.0",
+  "run": {
+    "id": "01M0GFQGGMK0TF2MXRZ8EG7373",
+    "domain": "example.com",
+    "scope": "full",
+    "stages": ["enumerate", "exclude", "resolve", "portscan", "httpprobe"],
+    "started_at": "2026-01-01T00:00:00Z",
+    "duration_ms": 383951,
+    "completed": true,
+    "truncated_by_timeout": false,
+    "version": "1.2.3",
+    "environment": "serverless-job"
+  },
+  "sources": [
+    {"name": "crt", "status": "ok", "found": 617, "duration_ms": 121},
+    {"name": "chaos", "status": "skipped_no_key", "found": 0},
+    {"name": "c99", "status": "rate_limited", "found": 40, "partial": true}
+  ],
+  "stats": {
+    "enumerated": 617, "excluded": 0, "in_scope": 617,
+    "live": 287, "dead": 330, "wildcard": 0,
+    "open_ports": 421, "http_services": 406
+  },
+  "hosts": [
+    {
+      "host": "api.example.com",
+      "status": "live",
+      "addresses": ["93.184.216.34"],
+      "cname": ["edge.example.net"],
+      "cdn": [{"name": "cloudflare", "type": "waf",
+               "addresses": ["93.184.216.34"], "scan_limited": true}],
+      "ports": [
+        {"port": 443, "protocol": "tcp", "state": "open",
+         "addresses": ["93.184.216.34"],
+         "http": {
+           "url": "https://api.example.com",
+           "scheme": "https",
+           "status_code": 200,
+           "title": "API",
+           "content_length": 1533,
+           "tech": ["nginx", "HSTS"],
+           "tls": {"subject_cn": "*.example.com", "issuer": "R3",
+                   "not_after": "2026-06-01T00:00:00Z",
+                   "sans": ["api.example.com", "www.example.com"]}
+         }}
+      ]
+    },
+    {"host": "old.example.com", "status": "dead", "reason": "nxdomain"}
+  ],
+  "warnings": ["198 address(es) behind a CDN or WAF were scanned for ports 80,443 only"]
+}
+```
+
+A few things the shape is deliberate about:
+
+- **Dead hosts stay in the report.** A dangling CNAME is a finding, not noise.
+  `nxdomain` and `no_answer` are distinct: a name that exists but has no address
+  is not a name that does not exist.
+- **Every source appears**, successful or not. A source that silently returns
+  nothing is what this accounting exists to expose.
+- **`scan_limited` marks a narrowed sweep.** "Only 80 and 443 are open" is
+  indistinguishable from a genuinely minimal host unless the report says the
+  scan was narrowed on purpose.
+- **Each port names the addresses it was found on.** Without it, one service
+  behind ten CNAMEs looks exactly like ten services.
+- **`url` omits the port when it is the scheme's default**, which makes a
+  scheme on an unusual port — TLS answering on 80 — the only kind that keeps
+  one.
+- **A truncated run is still a valid report**, flagged by `completed` and
+  `truncated_by_timeout`. Running out of time is data, not an error.
+
+</details>
+
+<details>
+<summary>Other output formats</summary>
+
+| `--format` | |
+|---|---|
+| `json` | one indented document; the default |
+| `json-compact` | the same document on one line, for log sinks |
+| `jsonl` | one host per line, for large scopes |
+| `text` | human-readable summary |
+
+Logs are a place to read a run, not a transport: a collector may split long
+lines (Scaleway Cockpit cuts at 16 KiB). Anything a machine consumes should go
+to `--webhook-url`.
+
+</details>
+
 ## Configuration
+
+<details>
+<summary>Options, precedence and exclusions</summary>
 
 Every option is settable three ways, and the names are mechanically related:
 
@@ -88,63 +191,165 @@ Every option is settable three ways, and the names are mechanically related:
 | environment | `FASTRECON_SCAN_MODE=connect` |
 | config file | `scan-mode: connect` |
 
-Precedence is `flag > environment > config file > default`. Run
-`fastrecon --help` for the full list, which is generated from the flag
-definitions and is therefore always current.
+Precedence is `flag > environment > config file > default`. That mapping is
+what lets a serverless job be configured entirely through environment
+variables. Run `fastrecon --help` for the full list, which is generated from
+the flag definitions and is therefore always current.
 
-Report formats: `json` (indented, the default), `json-compact` (the same
-document on one line, for log sinks), `jsonl` (one host per line), and `text`.
-
-The scope of a run is one value:
+**Exclusions** are applied before any network activity touches a host:
 
 ```sh
-fastrecon -d example.com --stages enum     # enumeration only
-fastrecon -d example.com --stages resolve  # + live/dead separation
-fastrecon -d example.com --stages ports    # + port scan
-fastrecon -d example.com --stages full     # + HTTP probe (default)
+--exclude 'admin.example.com'            # exact
+--exclude '*.dev.example.com'            # everything under dev
+--exclude 're:^staging[0-9]*\.'          # regexp
+--exclude-file ./out-of-scope.txt        # one per line, # comments
 ```
+
+A pattern that matches nothing is reported as a warning — a typo in an
+exclusion means hosts were scanned that should not have been.
+
+In the environment form, lines are the outer separator: a line starting with
+`re:` is one pattern kept whole (a regexp's repeat count contains a comma), any
+other line is a comma-separated list.
+
+**Ports**: `top-100` (default), `top-1000`, `full`, `web` (a curated
+HTTP-oriented set), or an explicit expression like `80,443,8000-8100`, with
+`--exclude-ports` to subtract.
+
+**Resolvers**: the bundled default is small and deliberate — Cloudflare, Google
+and Quad9's *unfiltered* endpoints. A filtering resolver returns a block-page
+address, and one that redirects NXDOMAIN turns every dead host into a live one.
+Bring your own with `--resolvers-file` or `--resolvers-url`; they are
+health-checked before the run, and the ones that lie or cannot be reached are
+dropped.
+
+</details>
 
 ## Credentials
 
-API keys are never baked into the image. Provide them at runtime, in this order
-of precedence:
+<details>
+<summary>Sources and where keys come from</summary>
 
-1. `FASTRECON_KEY_<SOURCE>` — the namespaced environment variable,
-2. `<SOURCE>_API_KEY` — the upstream spelling (`CHAOS_API_KEY`, …),
-3. a provider config file mounted into the container, pointed at with
-   `--provider-config` (subfinder/subfaster format),
-4. `FASTRECON_KEY_<SOURCE>_FILE` — a path to a file holding the key, for
-   Docker and Kubernetes secret mounts.
+| Source | Engine name | Key |
+|---|---|---|
+| ProjectDiscovery Chaos | `chaos` | required |
+| SecurityTrails | `securitytrails` | required |
+| c99.nl | `c99` | required |
+| sub.md | `submd` | optional |
+| crt.name | `crt` | optional |
 
-The default sources are `chaos`, `securitytrails`, `c99` (all key-required),
-plus `submd` and `crt` which work without one. A run with no credentials at all
-still returns data from the last two; the others are reported as
-`skipped_no_key` rather than silently dropped.
+The last two work without a credential, which is what makes a first run return
+data. The keyed ones report themselves as `skipped_no_key` rather than being
+silently dropped. `fastrecon sources` lists everything the engine knows.
+
+Keys are never baked into the image. Provide them at runtime, in this order of
+precedence:
+
+1. `FASTRECON_KEY_<SOURCE>` — the namespaced environment variable
+2. `<SOURCE>_API_KEY` — the upstream spelling (`CHAOS_API_KEY`, …)
+3. a provider config file, pointed at with `--provider-config`
+   (subfinder/subfaster format)
+4. `FASTRECON_KEY_<SOURCE>_FILE` — a path to a file holding the key, for Docker
+   and Kubernetes secret mounts
 
 Credential values never appear in the logs or the report. Error messages are
 scrubbed, including request URLs — some sources put the key in the query
 string.
 
+</details>
+
+## Serving it over HTTP
+
+<details>
+<summary><code>fastrecon serve</code></summary>
+
+The same pipeline behind an authenticated endpoint, for a serverless container:
+
+```sh
+fastrecon serve --api-token "$TOKEN"
+
+curl -X POST localhost:8080/run \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"domain":"example.com","stages":"enum"}'
+```
+
+The response is the report document. `GET /healthz` needs no token.
+
+The request says **what** to scan, never how the deployment is wired:
+credentials, sources, resolvers and any webhook destination come from the
+environment. An unknown field is rejected rather than ignored.
+
+One run at a time per instance — the enumeration engine keeps per-run state on
+globally shared instances, so a second concurrent request is refused with `429`
+rather than corrupting both. Deploy with a per-instance concurrency of 1 and it
+never fires.
+
+</details>
+
+## Deployment
+
+Running it as a Scaleway Serverless Job — with the resource sizing, the
+scheduling, and the traps worth knowing — is covered in
+**[deploy/scaleway](deploy/scaleway/README.md)**.
+
+## Performance
+
+Example of resources consumption in a Serverless Job with 1000 mvCPU & 1024 MB
+RAM, `--stages full --ports web`:
+
+| | 75 subdomains | 617 subdomains |
+|---|---|---|
+| wall time | 11 s | 384 s |
+| memory peak | 223 MiB | 252 MiB |
+| CPU peak | 0.59 vCPU | 0.51 vCPU |
+| result | 62 HTTP services | 406 HTTP services |
+
+Eight times the hosts for thirteen percent more memory: the cost is dominated
+by fixed allocations, not by target size, until the enumeration reaches five or
+six figures. The port scan dominates wall time — 289 s of the 384 s above.
+
+![CPU Consumption](https://github.com/user-attachments/assets/40376952-01d0-4261-824f-75d7104dc767)
+![RAM Consumption](https://github.com/user-attachments/assets/4005cb1c-d381-434f-b100-1c32618fb2b2)
+
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| 0 | run completed, report emitted |
-| 1 | invalid configuration or usage |
-| 2 | report emitted, but the run did not finish its scope |
-| 3 | report produced, at least one destination failed |
-| 4 | fatal error, no report produced — including a transient failure such as an unreachable resolver list |
+<details>
+<summary>What each one means, and which ones a scheduler should retry</summary>
+
+| Code | Meaning | Retry? |
+|---|---|---|
+| 0 | run completed, report emitted | — |
+| 1 | invalid configuration or usage | no, it will fail identically |
+| 2 | report emitted, scope unfinished | no, the report was delivered |
+| 3 | report produced, a destination failed | no, same reason |
+| 4 | no report produced, including transient failures | yes |
+
+Only code 4 justifies a retry. A platform that retries on any non-zero exit
+will re-run jobs that already delivered their report, so leave retries off
+unless duplicates are acceptable.
+
+</details>
 
 ## Development
 
+<details>
+<summary>Build, test, lint</summary>
+
 ```sh
+make build   # bin/fastrecon
 make test    # go test -race ./...
 make lint    # golangci-lint
 make cover   # coverage summary
 make static  # assert the binary is still statically linked
+make docker  # build the image
 ```
 
 `make static` is not optional busywork: the runtime image is
 `distroless/static`, which has no dynamic loader. A dependency that reaches
 libc through `dlopen` produces a binary that builds fine, passes every test,
 and then fails at `exec` inside the container. CI runs the same check.
+
+The design, the measurements behind the defaults, and the reasoning for the
+choices are in **[SPECIFICATIONS.md](SPECIFICATIONS.md)**.
+
+</details>
