@@ -225,3 +225,37 @@ func TestDetectEnvironmentPrefersExplicitLabel(t *testing.T) {
 		t.Errorf("DetectEnvironment in serve mode = %q, want %q", got, EnvServerlessFunction)
 	}
 }
+
+// The same value must mean the same thing however it is supplied. A user
+// translating FASTRECON_SOURCES=a,b from the deployment docs into --sources
+// a,b would otherwise get an error.
+func TestCommaListsAgreeBetweenFlagAndEnvironment(t *testing.T) {
+	fromFlag := mustLoad(t, "-d", "example.com", "--sources", "crt,submd", "--resolvers", "1.1.1.1,8.8.8.8")
+	if len(fromFlag.Sources) != 2 || fromFlag.Sources[1] != "submd" {
+		t.Errorf("sources from flag = %v, want them split", fromFlag.Sources)
+	}
+	if len(fromFlag.Resolvers) != 2 {
+		t.Errorf("resolvers from flag = %v, want them split", fromFlag.Resolvers)
+	}
+
+	t.Setenv("FASTRECON_SOURCES", "crt,submd")
+	fromEnv := mustLoad(t, "-d", "example.com")
+	if len(fromEnv.Sources) != len(fromFlag.Sources) {
+		t.Errorf("env %v and flag %v disagree", fromEnv.Sources, fromFlag.Sources)
+	}
+
+	// Repeating the flag must keep working.
+	repeated := mustLoad(t, "-d", "example.com", "--sources", "crt", "--sources", "submd")
+	if len(repeated.Sources) != 2 {
+		t.Errorf("repeated flags = %v, want both kept", repeated.Sources)
+	}
+}
+
+// Exclusions keep the opposite rule: a regexp's repeat count contains a
+// comma, so the flag form must not split it either.
+func TestExclusionFlagIsNotSplitOnCommas(t *testing.T) {
+	cfg := mustLoad(t, "-d", "example.com", "--exclude", `re:^a{1,3}\.example\.com$`)
+	if len(cfg.Exclude) != 1 {
+		t.Fatalf("exclude = %#v, want the pattern kept whole", cfg.Exclude)
+	}
+}

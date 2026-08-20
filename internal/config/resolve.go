@@ -280,8 +280,11 @@ func (l *loader) dur(name string) time.Duration {
 func (l *loader) strs(name string) []string {
 	v, err := l.fs.GetStringArray(name)
 	if err != nil {
-		l.errf("flag %s: %w", name, err)
-		return nil
+		// The comma-splitting flags are registered as slices, not arrays.
+		if v, err = l.fs.GetStringSlice(name); err != nil {
+			l.errf("flag %s: %w", name, err)
+			return nil
+		}
 	}
 	l.note(name)
 	if l.fs.Changed(name) {
