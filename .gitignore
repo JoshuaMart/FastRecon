@@ -11,4 +11,5 @@ provider-config.yaml
 provider-config.yml
 .env
 .env.*
-secrets/
+# Anchored: an unanchored 'secrets/' also matches internal/secrets/.
+/secrets/
