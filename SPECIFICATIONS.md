@@ -483,7 +483,7 @@ reported — the report is still emitted and still valid.
 |---|---|
 | 0 | run completed, report emitted |
 | 1 | invalid configuration / usage |
-| 2 | run completed but truncated by the global timeout |
+| 2 | report emitted, but the run did not finish its scope — the deadline was reached, or a stage failed or is unavailable |
 | 3 | run produced a report, but a sink failed (e.g. webhook delivery) |
 | 4 | fatal runtime error, no report produced |
 

@@ -1,0 +1,17 @@
+# Keep credentials and local state out of the build context entirely: the
+# image is built by CI and published, so anything reachable here can leak.
+provider-config.yaml
+provider-config.yml
+.env
+.env.*
+secrets/
+*.pem
+*.key
+
+.git/
+.github/
+dist/
+bin/
+results/
+*.md
+coverage.out

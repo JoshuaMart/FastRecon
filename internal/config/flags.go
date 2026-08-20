@@ -1,0 +1,78 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/spf13/pflag"
+
+	"github.com/JoshuaMart/FastRecon/internal/stage"
+)
+
+// headerFlags hold values that may legitimately contain a comma, so their
+// environment form is split on newlines only.
+var headerFlags = map[string]bool{"probe-header": true, "webhook-header": true}
+
+// RegisterFlags defines the full option surface. Defaults live here and
+// nowhere else, so `--help` is the reference for what a run does by default.
+func RegisterFlags(fs *pflag.FlagSet) {
+	fs.StringP("domain", "d", "", "root domain to enumerate (required)")
+	fs.StringArray("exclude", nil, "exclusion pattern: host, *.suffix, or re:<regexp> (repeatable)")
+	fs.String("exclude-file", "", "file of exclusion patterns, one per line, # for comments")
+	fs.Bool("exclude-strict-wildcard", false, "*.x.example.com excludes hosts under x.example.com but not x.example.com itself")
+	fs.Bool("report-excluded", false, "list excluded hosts and the pattern that matched in the report")
+
+	fs.String("stages", string(stage.ScopeFull), fmt.Sprintf("pipeline scope: %s", scopeList()))
+	fs.Duration("timeout", 30*time.Minute, "global deadline for the whole run")
+	fs.Float64("output-margin", 0.10, "fraction of the deadline reserved to build and deliver the report")
+
+	fs.String("enumerator", "subfaster", "subdomain enumeration engine")
+	fs.String("provider-config", "", "path to the source credentials file (never baked into the image)")
+	fs.String("source-retry-budget", "25%", "per-source rate-limit wait ceiling: percentage of the stage budget, or a duration")
+
+	fs.StringArray("resolvers", nil, "DNS resolvers to use (repeatable); empty uses the bundled set")
+	fs.Int("resolver-concurrency", 100, "concurrent DNS queries")
+	fs.Int("resolver-retries", 2, "retries per DNS query")
+	fs.Duration("resolver-timeout", 5*time.Second, "timeout per DNS query")
+
+	fs.String("scan-mode", ScanModeConnect, fmt.Sprintf("port scan mode: %s (unprivileged) or %s (needs CAP_NET_RAW)", ScanModeConnect, ScanModeSYN))
+	fs.String("ports", "top-100", "ports to scan: top-100, top-1000, web, or a list like 80,443,8000-8100")
+	fs.String("exclude-ports", "", "ports to subtract from the selection")
+	fs.Bool("skip-cdn", true, "on CDN/WAF addresses, scan only the standard web ports")
+	fs.Int("scan-concurrency", 200, "concurrent port connections")
+	fs.Int("scan-rate", 1000, "port scan packets per second")
+	fs.Duration("scan-timeout", 3*time.Second, "timeout per port connection")
+
+	fs.Int("probe-concurrency", 50, "concurrent HTTP probes")
+	fs.Duration("probe-timeout", 10*time.Second, "timeout per HTTP probe")
+	fs.Bool("probe-follow-redirects", true, "follow redirects while probing")
+	fs.Int("probe-max-redirects", 5, "maximum redirect hops")
+	fs.String("probe-user-agent", "", "User-Agent sent while probing; empty uses the built-in one")
+	fs.StringArray("probe-header", nil, "extra header sent while probing, as 'Name: value' (repeatable)")
+
+	fs.StringP("output", "o", StdoutPath, "report destination: a file path, or - for stdout")
+	fs.String("format", "json", "report format: json, jsonl, text")
+	fs.String("webhook-url", "", "POST the report as raw JSON to this URL")
+	fs.String("webhook-method", "POST", "HTTP method for the webhook")
+	fs.StringArray("webhook-header", nil, "extra header for the webhook, as 'Name: value' (repeatable)")
+	fs.Duration("webhook-timeout", 30*time.Second, "timeout per webhook attempt")
+	fs.Int("webhook-retries", 3, "webhook retries on 5xx, 429 and transport errors")
+
+	fs.String("log-level", "info", "log verbosity: debug, info, warn, error")
+	fs.String("log-format", "json", "log format on stderr: json, text")
+	fs.String("environment", "", "environment label recorded in the report; empty auto-detects")
+	fs.String("config", "", "config file path, or 'auto' to look in the user config directory")
+
+	fs.String("listen", ":8080", "serve mode: address to bind")
+	fs.String("api-token", "", "serve mode: shared token required on every request")
+}
+
+func scopeList() string {
+	scopes := stage.Scopes()
+	parts := make([]string, len(scopes))
+	for i, s := range scopes {
+		parts[i] = string(s)
+	}
+	return strings.Join(parts, ", ")
+}

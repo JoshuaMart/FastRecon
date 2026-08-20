@@ -1,0 +1,14 @@
+/dist/
+/bin/
+/results/
+# Anchored: an unanchored 'fastrecon' would also ignore cmd/fastrecon/.
+/fastrecon
+*.test
+coverage.out
+
+# Never commit source credentials.
+provider-config.yaml
+provider-config.yml
+.env
+.env.*
+secrets/
