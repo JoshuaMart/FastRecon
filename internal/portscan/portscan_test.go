@@ -472,3 +472,54 @@ func TestRateLimitStillAppliesOnASecondScan(t *testing.T) {
 		t.Error("both runs shared one limiter; the second would run unlimited once the first stopped it")
 	}
 }
+
+// An address is scanned once and mapped onto every host resolving to it.
+// Without recording which address a port came from, one service behind ten
+// names is indistinguishable from ten services.
+func TestPortsRecordTheAddressTheyWereFoundOn(t *testing.T) {
+	n := newScanner(t, false, func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error) {
+		return map[string][]int{"1.2.3.4": {8080}, "5.6.7.8": {8080, 443}}, nil
+	})
+
+	hosts := []report.Host{
+		// Two names, one address: the classic CNAME fan-in.
+		{Host: "a.example.com", Status: report.StatusLive, Addresses: []string{"1.2.3.4"}},
+		{Host: "b.example.com", Status: report.StatusLive, Addresses: []string{"1.2.3.4"}},
+		// One name, two addresses.
+		{Host: "c.example.com", Status: report.StatusLive, Addresses: []string{"1.2.3.4", "5.6.7.8"}},
+	}
+
+	res, err := n.Scan(context.Background(), hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][]report.Port{}
+	for _, h := range res.Hosts {
+		got[h.Host] = h.Ports
+	}
+
+	for _, name := range []string{"a.example.com", "b.example.com"} {
+		p := got[name]
+		if len(p) != 1 || !slices.Equal(p[0].Addresses, []string{"1.2.3.4"}) {
+			t.Errorf("%s port = %+v, want it to name the shared address", name, p)
+		}
+	}
+
+	// The port open on both of c's addresses records both.
+	c := got["c.example.com"]
+	if len(c) != 2 {
+		t.Fatalf("c ports = %+v, want 443 and 8080", c)
+	}
+	for _, p := range c {
+		switch p.Port {
+		case 8080:
+			if !slices.Equal(p.Addresses, []string{"1.2.3.4", "5.6.7.8"}) {
+				t.Errorf("8080 addresses = %v, want both", p.Addresses)
+			}
+		case 443:
+			if !slices.Equal(p.Addresses, []string{"5.6.7.8"}) {
+				t.Errorf("443 addresses = %v, want only the address it was found on", p.Addresses)
+			}
+		}
+	}
+}

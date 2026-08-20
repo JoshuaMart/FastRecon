@@ -78,7 +78,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.StringArray("probe-header", nil, "extra header sent while probing, as 'Name: value' (repeatable)")
 
 	fs.StringP("output", "o", StdoutPath, "report destination: a file path, or - for stdout")
-	fs.String("format", "json", "report format: json, jsonl, text")
+	fs.String("format", "json", "report format: json, json-compact (one line, for log sinks), jsonl, text")
 	fs.String("webhook-url", "", "POST the report as raw JSON to this URL")
 	fs.String("webhook-method", "POST", "HTTP method for the webhook")
 	fs.StringArray("webhook-header", nil, "extra header for the webhook, as 'Name: value' (repeatable)")

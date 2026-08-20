@@ -129,8 +129,37 @@ func TestRenderTextMarksTruncatedRuns(t *testing.T) {
 	}
 }
 
+// An indented report becomes hundreds of log lines that a collector may
+// reorder or drop; one line carries the same document intact.
+func TestRenderJSONCompactIsOneLine(t *testing.T) {
+	data, err := sample(t).Render(FormatJSONCompact)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if bytes.Contains(data, []byte("\n")) {
+		t.Errorf("compact output spans %d lines", bytes.Count(data, []byte("\n"))+1)
+	}
+
+	var back Report
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("compact output is not valid JSON: %v", err)
+	}
+	// Unlike jsonl, nothing is dropped.
+	if len(back.Hosts) != 2 || len(back.Sources) != 1 || back.Stats.Enumerated != 3 {
+		t.Errorf("compact output lost part of the document: %+v", back.Stats)
+	}
+
+	indented, err := sample(t).Render(FormatJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) >= len(indented) {
+		t.Errorf("compact is %d bytes against %d indented, want it smaller", len(data), len(indented))
+	}
+}
+
 func TestParseFormat(t *testing.T) {
-	for _, in := range []string{"json", "JSON", "jsonl", "text"} {
+	for _, in := range []string{"json", "JSON", "json-compact", "jsonl", "text"} {
 		if _, err := ParseFormat(in); err != nil {
 			t.Errorf("ParseFormat(%q): %v", in, err)
 		}

@@ -16,6 +16,10 @@ const (
 	// FormatJSON is one indented document: the default, and the only format
 	// that carries the whole report.
 	FormatJSON Format = "json"
+	// FormatJSONCompact is the whole document on one line. It exists for log
+	// sinks: an indented report becomes hundreds of log lines that a
+	// collector may reorder or drop, and reassembling it is guesswork.
+	FormatJSONCompact Format = "json-compact"
 	// FormatJSONL is one host per line, for scopes too large to hold in
 	// memory downstream. Run metadata is not in the stream — it goes to the
 	// log, which carries the same counters.
@@ -29,12 +33,14 @@ func ParseFormat(s string) (Format, error) {
 	switch Format(strings.ToLower(s)) {
 	case FormatJSON:
 		return FormatJSON, nil
+	case FormatJSONCompact:
+		return FormatJSONCompact, nil
 	case FormatJSONL:
 		return FormatJSONL, nil
 	case FormatText:
 		return FormatText, nil
 	default:
-		return "", fmt.Errorf("unknown format %q (valid: json, jsonl, text)", s)
+		return "", fmt.Errorf("unknown format %q (valid: json, json-compact, jsonl, text)", s)
 	}
 }
 
@@ -56,7 +62,9 @@ func (f Format) Ext() string {
 func (r *Report) Render(f Format) ([]byte, error) {
 	switch f {
 	case FormatJSON:
-		return renderJSON(r)
+		return renderJSON(r, true)
+	case FormatJSONCompact:
+		return renderJSON(r, false)
 	case FormatJSONL:
 		return renderJSONL(r)
 	case FormatText:
@@ -66,10 +74,12 @@ func (r *Report) Render(f Format) ([]byte, error) {
 	}
 }
 
-func renderJSON(r *Report) ([]byte, error) {
+func renderJSON(r *Report, indent bool) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "  ")
+	if indent {
+		enc.SetIndent("", "  ")
+	}
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(r); err != nil {
 		return nil, fmt.Errorf("encode report: %w", err)
