@@ -47,11 +47,15 @@ type Config struct {
 	SourceTimeout  time.Duration
 
 	// Resolution
-	Resolvers           []string
-	ResolverConcurrency int
-	ResolverRetries     int
-	ResolverTimeout     time.Duration
-	WildcardProbes      int
+	Resolvers            []string
+	ResolversFile        string
+	ResolversURL         string
+	ValidateResolvers    bool
+	ResolverHealthBudget time.Duration
+	ResolverConcurrency  int
+	ResolverRetries      int
+	ResolverTimeout      time.Duration
+	WildcardProbes       int
 
 	// Port scan
 	ScanMode        string

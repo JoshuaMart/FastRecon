@@ -34,7 +34,11 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.Bool("all-sources", false, "query every source the engine knows, not just the selection")
 	fs.Duration("source-timeout", 30*time.Second, "time ceiling for a single source, retries and backoff included")
 
-	fs.StringArray("resolvers", nil, "DNS resolvers to use (repeatable); empty uses the bundled set")
+	fs.StringArray("resolvers", nil, "DNS resolver IP to use (repeatable); empty uses the bundled set")
+	fs.String("resolvers-file", "", "file of resolver IPs, one per line, # for comments")
+	fs.String("resolvers-url", "", "https URL of a resolver list, fetched at startup (30s ceiling); for deployments with no volume to mount")
+	fs.Bool("validate-resolvers", true, "drop resolvers that are unreachable, answer a known name wrongly, or hijack NXDOMAIN")
+	fs.Duration("resolver-health-budget", 30*time.Second, "ceiling on the resolver health check; resolvers not reached in time are kept and counted")
 	fs.Int("resolver-concurrency", 100, "concurrent DNS queries")
 	fs.Int("resolver-retries", 2, "extra attempts per DNS query after the first")
 	fs.Duration("resolver-timeout", 5*time.Second, "timeout per DNS query")

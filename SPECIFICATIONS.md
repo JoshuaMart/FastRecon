@@ -303,9 +303,59 @@ Resolution splits in-scope hosts into **live** and **dead**.
 
 - Engine: **`dnsx` as a Go library** — pure Go, unprivileged, does its own concurrency and
   retries. No `massdns`/`puredns` binary is required in the image.
-- Configurable: resolver list (`--resolvers`, default a bundled public set), concurrency,
-  extra attempts per query, per-query timeout. Records queried: A, AAAA, CNAME.
+- Configurable: concurrency, extra attempts per query, per-query timeout. Records queried:
+  A, AAAA, CNAME.
 - A resolver given without a port gets `:53`, so `1.1.1.1` and `1.1.1.1:53` both work.
+
+#### Resolver pool
+
+Three sources, merged and deduplicated: `--resolvers` (repeatable), `--resolvers-file` (one
+per line, `#` comments), and `--resolvers-url` (fetched at startup over https, for the
+serverless deployments which have no volume to mount a file from). Entries must be literal IP
+addresses — a resolver given as a hostname would have to be resolved by some other resolver
+first, a dependency this stage must not have. Unparseable entries are counted and sampled in
+the log rather than silently skipped.
+
+The default is a small bundled set: Cloudflare, Google, and Quad9's **unfiltered** endpoints
+(`9.9.9.10`, `149.112.112.10`, not `9.9.9.9`). Non-filtering matters more here than resolver
+count: a filtering resolver returns a block-page address for a name it dislikes, and a
+resolver that redirects NXDOMAIN turns every dead host into a live one — corrupting exactly
+the live/dead split this stage exists to produce.
+
+**On large published resolver lists.** Lists like `trickest/resolvers` (~12,900 entries) exist
+for brute-force workloads: millions of queries that need spreading across many resolvers.
+That is not this stage's workload, which resolves the passive enumeration output — thousands
+of names at most. Measured on the same 30 hosts, from one network:
+
+| Pool | Resolution time |
+|---|---|
+| bundled default (6) | 0.8s |
+| `resolvers-trusted.txt`, 17 usable after validation | 23s |
+| `resolvers.txt` (12,925), unvalidated | 49s |
+
+The large pool is slower and less reliable for this workload, not faster. It remains available
+because it is the right tool if brute-force enumeration is ever added.
+
+#### Resolver health check
+
+`--validate-resolvers` (default on) probes each resolver twice before the run:
+
+- a **known name with a known answer**, so a resolver that lies is caught rather than merely
+  one that is unreachable,
+- a **random name that must not exist**, catching NXDOMAIN hijacking.
+
+A published list is validated by whoever publishes it, from wherever their validator runs,
+which says nothing about reachability from inside this job's network. Measured against
+`resolvers-trusted.txt`: **14 of its 31 entries were unusable** from one network, independently
+confirmed with `dig`.
+
+The pass is bounded by `--resolver-health-budget` (default 30s). Resolvers it did not reach are
+**kept and counted** — dropping them would silently shrink the pool, and claiming they passed
+would be a lie. Both the dropped count and the unchecked count reach the report as warnings. A
+pool where every resolver fails is an error, not a run with no resolvers.
+
+The check verifies correctness, not speed. A resolver that answers correctly but slowly stays
+in the pool, which is why the table above matters when choosing one.
 
 A host is **live** if it resolves to at least one address and is not a wildcard artifact.
 Everything else is **dead**, with a reason (`nxdomain`, `no_answer`, `timeout`). Dead hosts
@@ -439,7 +489,11 @@ Optional YAML, selected by `--config` / `FASTRECON_CONFIG`. Never read from an i
 | `--exclude-sources` | `FASTRECON_EXCLUDE_SOURCES` | — | sources to subtract from the selection |
 | `--all-sources` | `FASTRECON_ALL_SOURCES` | `false` | query every source the engine knows |
 | `--source-timeout` | `FASTRECON_SOURCE_TIMEOUT` | `30s` | time ceiling for a single source |
-| `--resolvers` | `FASTRECON_RESOLVERS` | bundled set | DNS resolvers to use |
+| `--resolvers` | `FASTRECON_RESOLVERS` | bundled set | DNS resolver IPs to use |
+| `--resolvers-file` | `FASTRECON_RESOLVERS_FILE` | — | file of resolver IPs |
+| `--resolvers-url` | `FASTRECON_RESOLVERS_URL` | — | https URL of a resolver list |
+| `--validate-resolvers` | `FASTRECON_VALIDATE_RESOLVERS` | `true` | health-check the pool before the run |
+| `--resolver-health-budget` | `FASTRECON_RESOLVER_HEALTH_BUDGET` | `30s` | ceiling on the health check |
 | `--wildcard-probes` | `FASTRECON_WILDCARD_PROBES` | `3` | random names probed per parent domain |
 | `--listen` (serve) | `FASTRECON_LISTEN` | `:8080` | HTTP bind address in function mode |
 | `--api-token` (serve) | `FASTRECON_API_TOKEN` | — | shared token required by the handler |

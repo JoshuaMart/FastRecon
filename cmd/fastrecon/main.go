@@ -131,11 +131,12 @@ func run(args []string) int {
 
 	// A stopped job or a container shutdown arrives as a signal. Cancelling
 	// the run rather than dying on the spot means the partial report still
-	// reaches its destinations.
+	// reaches its destinations. It is created before the stages are built so
+	// that resolver loading and health checking are cancellable too.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	stages, err := buildStages(cfg, log)
+	stages, err := buildStages(ctx, cfg, log)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fastrecon: %v\n", err)
 		return exitUsage
@@ -176,7 +177,7 @@ func run(args []string) int {
 // buildStages wires the stage implementations available in this build. The
 // stages beyond exclusion land in later phases; the pipeline reports the
 // ladder stopping rather than inventing an empty result.
-func buildStages(cfg *config.Config, log *slog.Logger) (pipeline.Stages, error) {
+func buildStages(ctx context.Context, cfg *config.Config, log *slog.Logger) (pipeline.Stages, error) {
 	resolver, err := secrets.NewResolver(cfg.ProviderConfig)
 	if err != nil {
 		return pipeline.Stages{}, err
@@ -214,9 +215,13 @@ func buildStages(cfg *config.Config, log *slog.Logger) (pipeline.Stages, error) 
 	// Built only when the scope reaches it: a resolver constructed for an
 	// enumeration-only run would open sockets nothing asked for.
 	if cfg.Scope.Includes(stage.Resolve) {
+		resolvers, err := buildResolverPool(ctx, cfg, log)
+		if err != nil {
+			return pipeline.Stages{}, err
+		}
 		resolver, err := resolve.New(resolve.Options{
 			Domain:         cfg.Domain,
-			Resolvers:      cfg.Resolvers,
+			Resolvers:      resolvers,
 			Concurrency:    cfg.ResolverConcurrency,
 			Retries:        cfg.ResolverRetries,
 			Timeout:        cfg.ResolverTimeout,
@@ -230,6 +235,44 @@ func buildStages(cfg *config.Config, log *slog.Logger) (pipeline.Stages, error) 
 	}
 
 	return stages, nil
+}
+
+// buildResolverPool assembles the resolver list and, unless told otherwise,
+// removes the resolvers that cannot be trusted to answer correctly.
+func buildResolverPool(ctx context.Context, cfg *config.Config, log *slog.Logger) ([]string, error) {
+	resolvers, err := resolve.LoadResolvers(ctx, resolve.LoadOptions{
+		Inline: cfg.Resolvers,
+		File:   cfg.ResolversFile,
+		URL:    cfg.ResolversURL,
+		Logger: log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Info("resolvers loaded", "count", len(resolvers))
+
+	if !cfg.ValidateResolvers {
+		return resolvers, nil
+	}
+
+	health := resolve.CheckResolvers(ctx, resolvers, resolve.HealthOptions{
+		Budget:      cfg.ResolverHealthBudget,
+		Timeout:     cfg.ResolverTimeout,
+		Concurrency: cfg.ResolverConcurrency,
+		Logger:      log,
+	})
+	if len(health.Good) == 0 {
+		return nil, fmt.Errorf("every one of the %d configured resolvers failed the health check", len(resolvers))
+	}
+	// These reach the report, not just the log: a resolution done through a
+	// pool that lost half its members is a result worth qualifying.
+	if len(health.Dropped) > 0 {
+		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("%d of %d resolvers dropped by the health check", len(health.Dropped), len(resolvers)))
+	}
+	if health.Unchecked > 0 {
+		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("%d of %d resolvers were kept unchecked: the health budget ran out", health.Unchecked, len(resolvers)))
+	}
+	return health.Good, nil
 }
 
 // logCredentials reports which sources have a key and where it came from.

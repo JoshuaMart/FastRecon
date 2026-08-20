@@ -285,14 +285,6 @@ func TestCandidateParentsStaysInScope(t *testing.T) {
 	}
 }
 
-func TestWithPorts(t *testing.T) {
-	got := withPorts([]string{"1.1.1.1", "8.8.8.8:53", " ", "2606:4700:4700::1111", "[2606:4700:4700::1111]:53"})
-	want := []string{"1.1.1.1:53", "8.8.8.8:53", "[2606:4700:4700::1111]:53", "[2606:4700:4700::1111]:53"}
-	if !slices.Equal(got, want) {
-		t.Errorf("withPorts = %v, want %v", got, want)
-	}
-}
-
 func TestNewRejectsUnusableOptions(t *testing.T) {
 	base := Options{Domain: "example.com", Concurrency: 1, Timeout: time.Second, WildcardProbes: 1, Logger: discardLogger()}
 	for name, mutate := range map[string]func(*Options){

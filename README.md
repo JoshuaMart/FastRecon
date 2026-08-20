@@ -18,6 +18,7 @@ Phase 3 of 8. `--stages enum` and `--stages resolve` are fully usable:
   activity touches a host,
 - DNS resolution splitting live from dead hosts, with per-parent wildcard
   detection so a `*.example.com` record cannot flood the live set,
+- resolver pools from a file or an https URL, health-checked before the run,
 - the CLI, with the full option surface and its precedence rules
   (flag > environment > config file > default),
 - the run report model and its `json` / `jsonl` / `text` renderings,
@@ -45,7 +46,15 @@ make build
 
 # Enumerate, then split live hosts from dead ones.
 ./bin/fastrecon -d example.com --stages resolve --format text
+
+# Bring your own resolver pool, from a file or a URL.
+./bin/fastrecon -d example.com --stages resolve --resolvers-file ./resolvers.txt
 ```
+
+The default resolver pool is small and deliberate: Cloudflare, Google and
+Quad9's unfiltered endpoints. Large public lists are supported but are the
+wrong tool for this workload — see `SPECIFICATIONS.md` §8, which has the
+measurements.
 
 ```sh
 # Same thing, containerised.

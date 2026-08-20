@@ -48,6 +48,10 @@ func Load(fs *pflag.FlagSet) (*Config, error) {
 	cfg.SourceTimeout = l.dur("source-timeout")
 
 	cfg.Resolvers = l.strs("resolvers")
+	cfg.ResolversFile = l.str("resolvers-file")
+	cfg.ResolversURL = l.str("resolvers-url")
+	cfg.ValidateResolvers = l.bool("validate-resolvers")
+	cfg.ResolverHealthBudget = l.dur("resolver-health-budget")
 	cfg.ResolverConcurrency = l.int("resolver-concurrency")
 	cfg.ResolverRetries = l.int("resolver-retries")
 	cfg.ResolverTimeout = l.dur("resolver-timeout")

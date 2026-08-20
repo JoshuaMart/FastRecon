@@ -21,9 +21,6 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/report"
 )
 
-// DefaultResolvers is the bundled resolver set, used when none is configured.
-var DefaultResolvers = []string{"1.1.1.1:53", "1.0.0.1:53", "8.8.8.8:53", "8.8.4.4:53"}
-
 // Options configures the resolver.
 type Options struct {
 	// Domain is the run's root domain, always probed for a wildcard record.
@@ -67,7 +64,6 @@ func New(opts Options) (*DNSX, error) {
 	if len(resolvers) == 0 {
 		resolvers = DefaultResolvers
 	}
-	resolvers = withPorts(resolvers)
 
 	client, err := dnsx.New(dnsx.Options{
 		BaseResolvers: resolvers,
@@ -216,25 +212,4 @@ func answersOf(data *retryabledns.DNSData) (addresses, cnames []string) {
 		addresses = nil
 	}
 	return addresses, cnames
-}
-
-// withPorts appends the default DNS port to any resolver given without one,
-// so "1.1.1.1" and "1.1.1.1:53" both work.
-func withPorts(resolvers []string) []string {
-	out := make([]string, 0, len(resolvers))
-	for _, r := range resolvers {
-		r = strings.TrimSpace(r)
-		if r == "" {
-			continue
-		}
-		if !strings.Contains(r, ":") || (strings.Count(r, ":") > 1 && !strings.Contains(r, "]")) {
-			// Bare IPv4, or a bare IPv6 without brackets.
-			if strings.Count(r, ":") > 1 {
-				r = "[" + r + "]"
-			}
-			r += ":53"
-		}
-		out = append(out, r)
-	}
-	return out
 }

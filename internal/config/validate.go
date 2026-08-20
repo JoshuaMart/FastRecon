@@ -77,6 +77,7 @@ func (c *Config) Validate() error {
 	}{
 		{"source-timeout", c.SourceTimeout},
 		{"resolver-timeout", c.ResolverTimeout},
+		{"resolver-health-budget", c.ResolverHealthBudget},
 		{"scan-timeout", c.ScanTimeout},
 		{"probe-timeout", c.ProbeTimeout},
 		{"webhook-timeout", c.WebhookTimeout},
@@ -130,6 +131,12 @@ func (c *Config) Validate() error {
 	// stdout carries the report; sending logs there too would corrupt it.
 	if c.Output == StdoutPath && c.Format == "" {
 		fail("format must be set when writing to stdout")
+	}
+
+	if c.ResolversFile != "" {
+		if _, err := os.Stat(c.ResolversFile); err != nil {
+			fail("resolvers-file %q is not readable: %v", c.ResolversFile, err)
+		}
 	}
 
 	if c.ProviderConfig != "" {
