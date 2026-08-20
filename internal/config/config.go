@@ -65,6 +65,7 @@ type Config struct {
 	ScanConcurrency int
 	ScanRate        int
 	ScanTimeout     time.Duration
+	ScanRetries     int
 
 	// HTTP probe
 	ProbeConcurrency     int

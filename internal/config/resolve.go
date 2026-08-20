@@ -64,6 +64,7 @@ func Load(fs *pflag.FlagSet) (*Config, error) {
 	cfg.ScanConcurrency = l.int("scan-concurrency")
 	cfg.ScanRate = l.int("scan-rate")
 	cfg.ScanTimeout = l.dur("scan-timeout")
+	cfg.ScanRetries = l.int("scan-retries")
 
 	cfg.ProbeConcurrency = l.int("probe-concurrency")
 	cfg.ProbeTimeout = l.dur("probe-timeout")

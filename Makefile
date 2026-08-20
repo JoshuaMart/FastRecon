@@ -8,7 +8,7 @@ LDFLAGS := -s -w \
 	-X $(PKG)/internal/version.Commit=$(COMMIT) \
 	-X $(PKG)/internal/version.Date=$(DATE)
 
-.PHONY: build test lint fmt vet cover docker clean
+.PHONY: build test lint fmt vet cover static docker clean
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BINARY) ./cmd/fastrecon
@@ -28,6 +28,14 @@ fmt:
 
 vet:
 	go vet ./...
+
+# The distroless runtime image has no dynamic loader, so a dependency that
+# dlopens libc would produce a binary that cannot start in it.
+static:
+	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/$(BINARY)-static ./cmd/fastrecon
+	@file /tmp/$(BINARY)-static | grep -q "statically linked" \
+		&& echo "static: ok" \
+		|| { file /tmp/$(BINARY)-static; echo "static: FAILED"; exit 1; }
 
 docker:
 	docker build \

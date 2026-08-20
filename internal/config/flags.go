@@ -51,6 +51,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.Int("scan-concurrency", 200, "concurrent port connections")
 	fs.Int("scan-rate", 1000, "port scan packets per second")
 	fs.Duration("scan-timeout", 3*time.Second, "timeout per port connection")
+	fs.Int("scan-retries", 2, "retries per port")
 
 	fs.Int("probe-concurrency", 50, "concurrent HTTP probes")
 	fs.Duration("probe-timeout", 10*time.Second, "timeout per HTTP probe")

@@ -70,10 +70,17 @@ type Resolver interface {
 	Resolve(ctx context.Context, hosts []string) (Resolution, error)
 }
 
+// PortScan is what a PortScanner produces: every host it was given, the live
+// ones enriched with their open ports and the CDN determination.
+type PortScan struct {
+	Partial
+	Hosts []report.Host
+}
+
 // PortScanner enriches live hosts with their open ports.
 type PortScanner interface {
 	Name() string
-	Scan(ctx context.Context, hosts []report.Host) ([]report.Host, error)
+	Scan(ctx context.Context, hosts []report.Host) (PortScan, error)
 }
 
 // Prober enriches open ports with the HTTP service behind them.
@@ -254,12 +261,13 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		if p.stages.PortScanner == nil {
 			return ErrNoImplementation
 		}
-		hosts, err := p.stages.PortScanner.Scan(ctx, state.found)
+		res, err := p.stages.PortScanner.Scan(ctx, state.found)
 		if err != nil {
 			return err
 		}
-		state.found = hosts
-		rep.Hosts = hosts
+		state.found = res.Hosts
+		rep.Hosts = res.Hosts
+		p.applyPartial(rep, st, res.Partial)
 		return nil
 
 	case stage.HTTPProbe:

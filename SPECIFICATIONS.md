@@ -399,18 +399,44 @@ it gets revisited.
 
 ## 9. Stage 4 — Port scanning
 
-- Engine: **`naabu` as a Go library**, in **connect** mode by default (`-s c` equivalent),
-  which requires no privileges and works in a serverless job.
-- `--scan-mode=syn` is available for privileged local runs; the tool checks for the required
-  capability at startup and refuses with an explicit error if absent, instead of degrading
-  silently.
+- Engine: a **built-in TCP connect scanner**. Connect scanning requires no privileges, which
+  is what makes it work in a serverless job. Probes are ordered port-major — every address on
+  one port before moving to the next — so a single host is never hammered with the whole port
+  list back to back, and they are rate-limited by `--scan-rate`.
+- A refusal is a definitive answer and is never retried; only timeouts and local file
+  descriptor exhaustion are, since those leave the port's state unknown.
+- `--scan-mode=syn` is **refused**, not silently downgraded: a SYN scan the process cannot
+  perform finds no open ports at all, which reads exactly like a host with nothing listening.
+
+#### Why not naabu
+
+naabu was the intended engine and its API fits well — `OnResult` callback, stdout disabled, no
+`$HOME` writes in library mode. It was implemented, and then removed after the container was
+actually run rather than assumed to work:
+
+naabu reaches `sendmmsg` through `purego.Dlopen("libc.so.6")` to batch raw sends. On Linux
+that path is unconditional, and `//go:cgo_import_dynamic` makes the binary **dynamically
+linked even with `CGO_ENABLED=0`**. The `distroless/static` runtime image has no dynamic
+loader, so the binary failed at exec with `no such file or directory` — a message that names
+nothing about the cause.
+
+The trade was: keep naabu and give up the static image that every deployment here is built
+on, or keep the static image and write the connect scanner. The only capability naabu offered
+beyond it is SYN mode, which needs privileges the target environments do not grant. CI now
+asserts the binary stays statically linked, because this failure is invisible until the image
+is executed.
 - Port selection (`--ports` / `FASTRECON_PORTS`):
-  - `top-100` (default), `top-1000`, `web` (a curated HTTP-oriented set),
+  - `top-100` (default), `top-1000`, `full`, `web` (a curated HTTP-oriented set),
   - explicit lists and ranges: `80,443,8000-8100`,
   - `--exclude-ports` to subtract.
-- Tunables: concurrency, rate limit, connect timeout, retries, per-host and global caps.
-- Scanning targets resolved IPs, deduplicated: several subdomains pointing at the same IP are
-  scanned once and the results are mapped back onto every host sharing that IP.
+  A malformed expression is rejected at startup with the offending part named, rather than
+  inside the engine.
+- Tunables: concurrency, rate limit, connect timeout, retries.
+- **Only live hosts are scanned.** A dead host has no address to connect to, and a wildcard
+  artifact is not a host — scanning either spends the budget proving something already known.
+- Scanning targets resolved addresses, deduplicated: several subdomains pointing at the same
+  address are scanned once and the result is mapped back onto every host sharing it. Ports
+  found across a host's several addresses are merged and deduplicated.
 
 ### 9.1 CDN and WAF determination
 
@@ -418,12 +444,16 @@ Before a single port is touched, every target address is checked against the kno
 and cloud-provider ranges. This is a **determination step, not a filter**: it runs on every
 run, and its outcome is recorded whether or not it changes what gets scanned.
 
-naabu exposes the two halves separately, and FastRecon uses both:
+The two halves are independent, and FastRecon does both:
 
-| naabu option | Role | Governed by |
+| Half | Role | Governed by |
 |---|---|---|
-| `-exclude-cdn` | restrict CDN/WAF addresses to ports 80 and 443 | `--skip-cdn` (default on) |
-| `-display-cdn` | report which provider was matched | always on |
+| restriction | scan CDN/WAF addresses for ports 80 and 443 only | `--skip-cdn` (default on) |
+| determination | record which provider was matched | always on |
+
+The determination uses `cdncheck`, the same library naabu uses for its own `-exclude-cdn`.
+Running it before the scan is what lets the port list be decided per address: the full sweep
+for origin addresses, ports 80 and 443 for the edges.
 
 - **Why restrict.** A CDN edge answers for thousands of unrelated customers. Its open ports
   describe the provider's infrastructure, not the target's attack surface, so scanning the
@@ -495,6 +525,7 @@ Optional YAML, selected by `--config` / `FASTRECON_CONFIG`. Never read from an i
 | `--validate-resolvers` | `FASTRECON_VALIDATE_RESOLVERS` | `true` | health-check the pool before the run |
 | `--resolver-health-budget` | `FASTRECON_RESOLVER_HEALTH_BUDGET` | `30s` | ceiling on the health check |
 | `--wildcard-probes` | `FASTRECON_WILDCARD_PROBES` | `3` | random names probed per parent domain |
+| `--scan-retries` | `FASTRECON_SCAN_RETRIES` | `2` | retries per port |
 | `--listen` (serve) | `FASTRECON_LISTEN` | `:8080` | HTTP bind address in function mode |
 | `--api-token` (serve) | `FASTRECON_API_TOKEN` | — | shared token required by the handler |
 

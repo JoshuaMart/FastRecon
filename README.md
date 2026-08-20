@@ -10,7 +10,7 @@ first; this file is only the quick start.
 
 ## Status
 
-Phase 3 of 8. `--stages enum` and `--stages resolve` are fully usable:
+Phase 4 of 8. `--stages enum`, `resolve` and `ports` are fully usable:
 
 - passive subdomain enumeration from multiple sources, with per-source
   accounting in the report,
@@ -19,6 +19,9 @@ Phase 3 of 8. `--stages enum` and `--stages resolve` are fully usable:
 - DNS resolution splitting live from dead hosts, with per-parent wildcard
   detection so a `*.example.com` record cannot flood the live set,
 - resolver pools from a file or an https URL, health-checked before the run,
+- unprivileged TCP connect port scanning, rate-limited, with CDN and WAF
+  determination so a narrowed port list is never mistaken for an exhaustive
+  one,
 - the CLI, with the full option surface and its precedence rules
   (flag > environment > config file > default),
 - the run report model and its `json` / `jsonl` / `text` renderings,
@@ -27,7 +30,7 @@ Phase 3 of 8. `--stages enum` and `--stages resolve` are fully usable:
   handling, and exit codes,
 - the container image and CI.
 
-Port scanning and HTTP probing land in phases 4–5. Asking for a
+HTTP probing lands in phase 5. Asking for a
 wider scope walks the ladder as far as it can, then reports the stage that has
 no implementation and exits 2 — it does not pretend to have found nothing.
 
@@ -49,6 +52,9 @@ make build
 
 # Bring your own resolver pool, from a file or a URL.
 ./bin/fastrecon -d example.com --stages resolve --resolvers-file ./resolvers.txt
+
+# Enumerate, resolve, then scan the web ports of the live hosts.
+./bin/fastrecon -d example.com --stages ports --ports web --format text
 ```
 
 The default resolver pool is small and deliberate: Cloudflare, Google and
@@ -122,4 +128,10 @@ string.
 make test    # go test -race ./...
 make lint    # golangci-lint
 make cover   # coverage summary
+make static  # assert the binary is still statically linked
 ```
+
+`make static` is not optional busywork: the runtime image is
+`distroless/static`, which has no dynamic loader. A dependency that reaches
+libc through `dlopen` produces a binary that builds fine, passes every test,
+and then fails at `exec` inside the container. CI runs the same check.

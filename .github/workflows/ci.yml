@@ -32,6 +32,19 @@ jobs:
       - name: Test
         run: go test -race -coverprofile=coverage.out ./...
 
+      # The runtime image is distroless/static, which has no dynamic loader. A
+      # dependency that reaches libc through dlopen makes the binary
+      # dynamically linked, and it then fails at exec time with a message that
+      # says nothing about the cause. Catch it here instead.
+      - name: Binary must stay statically linked
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/fastrecon ./cmd/fastrecon
+          if ! file /tmp/fastrecon | grep -q "statically linked"; then
+            file /tmp/fastrecon
+            echo "::error::binary is not statically linked; the distroless static image cannot exec it"
+            exit 1
+          fi
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest

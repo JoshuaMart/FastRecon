@@ -20,6 +20,7 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/exclude"
 	"github.com/JoshuaMart/FastRecon/internal/logging"
 	"github.com/JoshuaMart/FastRecon/internal/pipeline"
+	"github.com/JoshuaMart/FastRecon/internal/portscan"
 	"github.com/JoshuaMart/FastRecon/internal/resolve"
 	"github.com/JoshuaMart/FastRecon/internal/secrets"
 	"github.com/JoshuaMart/FastRecon/internal/sink"
@@ -232,6 +233,24 @@ func buildStages(ctx context.Context, cfg *config.Config, log *slog.Logger) (pip
 			return pipeline.Stages{}, err
 		}
 		stages.Resolver = resolver
+	}
+
+	if cfg.Scope.Includes(stage.PortScan) {
+		scanner, err := portscan.New(portscan.Options{
+			Mode:         cfg.ScanMode,
+			Ports:        cfg.Ports,
+			ExcludePorts: cfg.ExcludePorts,
+			SkipCDN:      cfg.SkipCDN,
+			Concurrency:  cfg.ScanConcurrency,
+			Rate:         cfg.ScanRate,
+			Retries:      cfg.ScanRetries,
+			Timeout:      cfg.ScanTimeout,
+			Logger:       log,
+		})
+		if err != nil {
+			return pipeline.Stages{}, err
+		}
+		stages.PortScanner = scanner
 	}
 
 	return stages, nil

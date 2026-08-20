@@ -3,14 +3,13 @@ module github.com/JoshuaMart/FastRecon
 go 1.25
 
 require (
+	github.com/projectdiscovery/cdncheck v1.2.37
 	github.com/projectdiscovery/dnsx v1.2.3
 	github.com/projectdiscovery/gologger v1.1.69
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/net v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
-
-require github.com/projectdiscovery/cdncheck v1.2.37 // indirect
 
 require (
 	aead.dev/minisign v0.2.0 // indirect

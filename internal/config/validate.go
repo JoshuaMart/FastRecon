@@ -66,6 +66,7 @@ func (c *Config) Validate() error {
 		{"probe-max-redirects", c.ProbeMaxRedirects},
 		{"webhook-retries", c.WebhookRetries},
 		{"scan-rate", c.ScanRate},
+		{"scan-retries", c.ScanRetries},
 	} {
 		if p.v < 0 {
 			fail("%s must not be negative, got %d", p.name, p.v)
