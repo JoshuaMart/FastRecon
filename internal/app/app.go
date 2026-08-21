@@ -283,17 +283,25 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings []string, e
 			Logger:      a.log,
 		})
 		if len(health.Good) == 0 {
-			return nil, nil, fmt.Errorf("%w: every one of the %d configured resolvers failed the health check", ErrRuntime, len(resolvers))
+			// Every resolver failing is far more often a local condition — no
+			// egress on port 53, a captive network, a blocked anchor — than a
+			// pool that is genuinely all hostile. Refusing to run turns that
+			// into no report at all, so the run continues on the unvalidated
+			// pool and says so, in the report as well as the log.
+			a.log.Error("resolver health check dropped every resolver; continuing without validation", "resolvers", len(resolvers))
+			warnings = append(warnings, fmt.Sprintf("all %d resolvers failed the health check and the run continued without validating them: the live/dead split may be wrong", len(resolvers)))
+		} else {
+			// These reach the report, not just the log: a resolution done
+			// through a pool that lost half its members is a result worth
+			// qualifying.
+			if len(health.Dropped) > 0 {
+				warnings = append(warnings, fmt.Sprintf("%d of %d resolvers dropped by the health check", len(health.Dropped), len(resolvers)))
+			}
+			if health.Unchecked > 0 {
+				warnings = append(warnings, fmt.Sprintf("%d of %d resolvers were kept unchecked: the health budget ran out", health.Unchecked, len(resolvers)))
+			}
+			resolvers = health.Good
 		}
-		// These reach the report, not just the log: a resolution done through
-		// a pool that lost half its members is a result worth qualifying.
-		if len(health.Dropped) > 0 {
-			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers dropped by the health check", len(health.Dropped), len(resolvers)))
-		}
-		if health.Unchecked > 0 {
-			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers were kept unchecked: the health budget ran out", health.Unchecked, len(resolvers)))
-		}
-		resolvers = health.Good
 	}
 
 	a.pool, a.poolWarnings = resolvers, warnings

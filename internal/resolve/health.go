@@ -4,22 +4,36 @@ import (
 	"context"
 	"log/slog"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/miekg/dns"
 	"github.com/projectdiscovery/retryabledns"
 )
 
-// Health-check anchors: positive anchor (known answer to catch liars) + negative anchor (NXDOMAIN hijacking).
+// Health-check anchors: positive anchors (known answers, to catch liars) +
+// a negative anchor (a name that cannot exist, to catch NXDOMAIN hijacking).
 const (
-	healthAnchor          = "one.one.one.one"
 	healthNegativeTLD     = "com"
 	defaultHealthWorkers  = 200
 	healthQueryMaxTimeout = 3 * time.Second
 )
 
-var healthAnchorAddresses = []string{"1.1.1.1", "1.0.0.1"}
+// healthAnchors are names whose published addresses are stable and widely
+// known, so a resolver answering something else is answering for someone.
+//
+// There are three, run by three operators, because a single anchor is one
+// operator's decision away from failing every resolver in the pool at once —
+// and a health check that drops the whole pool is worse than no health check.
+// They are consulted in order and the first correct answer settles it, so the
+// common case still costs one query.
+var healthAnchors = []struct {
+	name      string
+	addresses []string
+}{
+	{"one.one.one.one", []string{"1.1.1.1", "1.0.0.1"}},
+	{"dns.google", []string{"8.8.8.8", "8.8.4.4"}},
+	{"dns.quad9.net", []string{"9.9.9.9", "149.112.112.112"}},
+}
 
 // Dropped records a resolver removed from the pool and why.
 type Dropped struct {
@@ -78,31 +92,17 @@ func CheckResolvers(ctx context.Context, resolvers []string, opts HealthOptions)
 		reason   string
 		checked  bool
 	}
+	// Pre-filled as unchecked: a resolver the budget never reached is kept,
+	// not dropped. Published lists run to tens of thousands of entries, so
+	// the pool size is exactly where a goroutine per item hurts most.
 	outcomes := make([]outcome, len(resolvers))
-
-	var (
-		wg  sync.WaitGroup
-		sem = make(chan struct{}, opts.Concurrency)
-	)
 	for i, resolver := range resolvers {
-		wg.Add(1)
-		go func(i int, resolver string) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-budgetCtx.Done():
-				outcomes[i] = outcome{resolver: resolver}
-				return
-			}
-			if budgetCtx.Err() != nil {
-				outcomes[i] = outcome{resolver: resolver}
-				return
-			}
-			outcomes[i] = outcome{resolver: resolver, reason: checkOne(resolver, timeout), checked: true}
-		}(i, resolver)
+		outcomes[i] = outcome{resolver: resolver}
 	}
-	wg.Wait()
+
+	workers(budgetCtx, len(resolvers), opts.Concurrency, func(i int) {
+		outcomes[i] = outcome{resolver: resolvers[i], reason: checkOne(resolvers[i], timeout), checked: true}
+	})
 
 	for _, o := range outcomes {
 		switch {
@@ -145,12 +145,46 @@ func checkResolver(resolver string, timeout time.Duration) string {
 		return dropUnreachable
 	}
 
-	positive, err := client.Query(healthAnchor, dns.TypeA)
-	if err != nil || positive == nil || len(positive.A) == 0 {
-		return dropUnreachable
+	// The two ways an anchor can fail to settle the question are not the same,
+	// and telling them apart is what keeps this cheap:
+	//
+	//   no response at all   the resolver is unreachable. Asking it about two
+	//                        more names buys nothing and costs two more
+	//                        timeouts — on a list of thousands, that is the
+	//                        whole health budget.
+	//   a response with no
+	//   address              the resolver works and the anchor is the problem;
+	//                        this is exactly the case the other anchors exist
+	//                        for, so move on to the next one.
+	//
+	// A resolver is only called a liar when every anchor that gave it a chance
+	// came back with addresses nobody publishes.
+	correct, wrong := 0, 0
+	for _, anchor := range healthAnchors {
+		positive, err := client.Query(anchor.name, dns.TypeA)
+		if err != nil {
+			return dropUnreachable
+		}
+		if positive == nil || len(positive.A) == 0 {
+			continue
+		}
+		if slices.ContainsFunc(positive.A, func(a string) bool { return slices.Contains(anchor.addresses, a) }) {
+			correct++
+			break
+		}
+		wrong++
 	}
-	if !slices.ContainsFunc(positive.A, func(a string) bool { return slices.Contains(healthAnchorAddresses, a) }) {
+	switch {
+	case correct > 0:
+		// Honest about a name it cannot have guessed: that settles it, and it
+		// is the first anchor in the common case.
+	case wrong > 0:
 		return dropLying
+	default:
+		// Every anchor answered without an address. Nothing here is a verdict
+		// about the resolver, so it is treated as one that gave no usable
+		// answer rather than one caught lying.
+		return dropUnreachable
 	}
 
 	negative, err := client.Query(randomLabel()+"."+healthNegativeTLD, dns.TypeA)
