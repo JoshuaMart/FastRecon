@@ -14,6 +14,8 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/projectdiscovery/cdncheck"
+
 	"github.com/JoshuaMart/FastRecon/internal/config"
 	"github.com/JoshuaMart/FastRecon/internal/enumerate"
 	"github.com/JoshuaMart/FastRecon/internal/exclude"
@@ -40,6 +42,16 @@ type App struct {
 	poolMu       sync.Mutex
 	pool         []string
 	poolWarnings []string
+
+	// Engine cache. Two of the stage engines carry a large embedded dataset —
+	// the CDN address ranges and the technology fingerprints — and building
+	// them costs ~130ms and ~110MB of retained heap. Every option they take
+	// is process-level, never per-request, so they are built once and shared.
+	// Rebuilding them per run made a function instance pay that on every
+	// request, which is how a 256MB instance runs out of memory.
+	engineMu sync.Mutex
+	cdn      *cdncheck.Client
+	prober   *probe.HTTPX
 }
 
 // New settles the process-level configuration.
@@ -105,12 +117,19 @@ func (a *App) resolveCredentials() map[string]secrets.Credential {
 }
 
 // buildStages wires the stage implementations the scope calls for.
+//
+// Every option is read from cfg, which is the process configuration for a CLI
+// run and a per-request copy of it in serve mode. Reading one from a.cfg
+// instead would work today and silently ignore the override the day that
+// option becomes caller-settable, so the rule is uniform and has no
+// exceptions. The two cached engines below are the deliberate counterpart:
+// they take no run-scoped option at all.
 func (a *App) buildStages(ctx context.Context, cfg *config.Config) (pipeline.Stages, error) {
 	enumerator, err := enumerate.NewSubfaster(enumerate.Options{
-		Sources:        a.cfg.Sources,
-		ExcludeSources: a.cfg.ExcludeSources,
-		All:            a.cfg.AllSources,
-		SourceTimeout:  a.cfg.SourceTimeout,
+		Sources:        cfg.Sources,
+		ExcludeSources: cfg.ExcludeSources,
+		All:            cfg.AllSources,
+		SourceTimeout:  cfg.SourceTimeout,
 		Credentials:    a.creds,
 		Redactor:       a.redactor,
 		Logger:         a.log,
@@ -137,10 +156,10 @@ func (a *App) buildStages(ctx context.Context, cfg *config.Config) (pipeline.Sta
 		resolver, err := resolve.New(resolve.Options{
 			Domain:         cfg.Domain,
 			Resolvers:      resolvers,
-			Concurrency:    a.cfg.ResolverConcurrency,
-			Retries:        a.cfg.ResolverRetries,
-			Timeout:        a.cfg.ResolverTimeout,
-			WildcardProbes: a.cfg.WildcardProbes,
+			Concurrency:    cfg.ResolverConcurrency,
+			Retries:        cfg.ResolverRetries,
+			Timeout:        cfg.ResolverTimeout,
+			WildcardProbes: cfg.WildcardProbes,
 			Logger:         a.log,
 		})
 		if err != nil {
@@ -151,14 +170,15 @@ func (a *App) buildStages(ctx context.Context, cfg *config.Config) (pipeline.Sta
 
 	if cfg.Scope.Includes(stage.PortScan) {
 		scanner, err := portscan.New(portscan.Options{
-			Mode:         a.cfg.ScanMode,
+			Mode:         cfg.ScanMode,
 			Ports:        cfg.Ports,
 			ExcludePorts: cfg.ExcludePorts,
 			SkipCDN:      cfg.SkipCDN,
-			Concurrency:  a.cfg.ScanConcurrency,
-			Rate:         a.cfg.ScanRate,
-			Retries:      a.cfg.ScanRetries,
-			Timeout:      a.cfg.ScanTimeout,
+			Concurrency:  cfg.ScanConcurrency,
+			Rate:         cfg.ScanRate,
+			Retries:      cfg.ScanRetries,
+			Timeout:      cfg.ScanTimeout,
+			CDN:          a.cdnRanges(),
 			Logger:       a.log,
 		})
 		if err != nil {
@@ -168,17 +188,7 @@ func (a *App) buildStages(ctx context.Context, cfg *config.Config) (pipeline.Sta
 	}
 
 	if cfg.Scope.Includes(stage.HTTPProbe) {
-		prober, err := probe.New(probe.Options{
-			Concurrency:     a.cfg.ProbeConcurrency,
-			Rate:            a.cfg.ProbeRate,
-			Timeout:         a.cfg.ProbeTimeout,
-			Retries:         a.cfg.ProbeRetries,
-			FollowRedirects: a.cfg.ProbeFollowRedirects,
-			MaxRedirects:    a.cfg.ProbeMaxRedirects,
-			UserAgent:       a.cfg.ProbeUserAgent,
-			Headers:         a.cfg.ProbeHeaders,
-			Logger:          a.log,
-		})
+		prober, err := a.httpProber()
 		if err != nil {
 			return pipeline.Stages{}, err
 		}
@@ -186,6 +196,59 @@ func (a *App) buildStages(ctx context.Context, cfg *config.Config) (pipeline.Sta
 	}
 
 	return stages, nil
+}
+
+// cdnRanges returns the shared CDN address ranges, loading them on first use.
+//
+// The dataset is embedded and takes no option, so one instance serves every
+// run. It is only built when a scope actually reaches the port scan, which is
+// what keeps an enumeration-only run from paying for it.
+func (a *App) cdnRanges() *cdncheck.Client {
+	a.engineMu.Lock()
+	defer a.engineMu.Unlock()
+
+	if a.cdn == nil {
+		a.cdn = cdncheck.New()
+		a.log.Debug("cdn ranges loaded")
+	}
+	return a.cdn
+}
+
+// httpProber returns the shared prober, building it on first use.
+//
+// Every probe option is process-level — a request may choose what to scan,
+// never how the deployment probes — so the prober is built from the process
+// configuration and reused. That reuse is the point: it holds the technology
+// fingerprints and the HTTP clients, and the httpx client has no Close, so a
+// per-run instance leaves its connection pool behind for the garbage
+// collector to find.
+//
+// Reuse is safe because a prober carries no per-run state: Probe builds its
+// own rate limiter and result set on each call.
+func (a *App) httpProber() (*probe.HTTPX, error) {
+	a.engineMu.Lock()
+	defer a.engineMu.Unlock()
+
+	if a.prober != nil {
+		return a.prober, nil
+	}
+	prober, err := probe.New(probe.Options{
+		Concurrency:     a.cfg.ProbeConcurrency,
+		Rate:            a.cfg.ProbeRate,
+		Timeout:         a.cfg.ProbeTimeout,
+		Retries:         a.cfg.ProbeRetries,
+		FollowRedirects: a.cfg.ProbeFollowRedirects,
+		MaxRedirects:    a.cfg.ProbeMaxRedirects,
+		UserAgent:       a.cfg.ProbeUserAgent,
+		Headers:         a.cfg.ProbeHeaders,
+		Logger:          a.log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	a.prober = prober
+	a.log.Debug("technology fingerprints loaded")
+	return prober, nil
 }
 
 // resolverPool loads resolver list once, health-checks and caches it.

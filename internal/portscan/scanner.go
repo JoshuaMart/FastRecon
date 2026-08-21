@@ -36,7 +36,12 @@ type Options struct {
 	Rate        int
 	Retries     int
 	Timeout     time.Duration
-	Logger      *slog.Logger
+	// CDN is the address-range dataset to classify against. Loading it costs
+	// ~13ms and ~9MB, and it takes no option, so a caller running several
+	// scans passes one instance rather than paying per scan. Nil loads a
+	// private one, which is what a standalone use of this package wants.
+	CDN    *cdncheck.Client
+	Logger *slog.Logger
 }
 
 // Scanner is the built-in PortScanner.
@@ -78,7 +83,12 @@ func New(opts Options) (*Scanner, error) {
 		return nil, fmt.Errorf("portscan: unknown scan mode %q", opts.Mode)
 	}
 
-	s := &Scanner{opts: opts, ports: ports, cdn: cdncheck.New()}
+	cdn := opts.CDN
+	if cdn == nil {
+		cdn = cdncheck.New()
+	}
+
+	s := &Scanner{opts: opts, ports: ports, cdn: cdn}
 	s.scan = s.scanConnect
 	return s, nil
 }
