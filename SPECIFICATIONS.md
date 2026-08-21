@@ -129,6 +129,11 @@ list is rejected rather than ignored — see §4.3 for what is excluded and why.
 the report document of §13.2. `GET /healthz` needs no token, which is what makes it usable as
 a platform probe.
 
+This deployment builds **no sinks**: the report is the response. A `--webhook-url` configured
+on the function is validated at startup and then never fires, which from the outside is
+indistinguishable from one that fires and is never received — so `serve` logs a warning about
+it at startup rather than leaving it to be discovered.
+
 | Status | Meaning |
 |---|---|
 | `200` | report produced — **including a partial one**, which says so in `completed` and `truncated_by_timeout` |
@@ -355,6 +360,13 @@ because it is the right tool if brute-force enumeration is ever added.
   one that is unreachable,
 - a **random name that must not exist**, catching NXDOMAIN hijacking.
 
+The known name is drawn from three anchors run by three operators
+(`one.one.one.one`, `dns.google`, `dns.quad9.net`). They are tried in order and the first
+correct answer settles it, so the common case still costs one query; the others exist because a
+single anchor is one operator's decision — or one network filter — away from failing every
+resolver in the pool at once. A resolver is only called a liar when every anchor that answered
+came back with addresses nobody publishes.
+
 A published list is validated by whoever publishes it, from wherever their validator runs,
 which says nothing about reachability from inside this job's network. Measured against
 `resolvers-trusted.txt`: **14 of its 31 entries were unusable** from one network, independently
@@ -362,8 +374,13 @@ confirmed with `dig`.
 
 The pass is bounded by `--resolver-health-budget` (default 30s). Resolvers it did not reach are
 **kept and counted** — dropping them would silently shrink the pool, and claiming they passed
-would be a lie. Both the dropped count and the unchecked count reach the report as warnings. A
-pool where every resolver fails is an error, not a run with no resolvers.
+would be a lie. Both the dropped count and the unchecked count reach the report as warnings.
+
+A pool where **every** resolver fails is far more often a local condition — no egress on port
+53, a captive network, a blocked anchor — than a pool that is genuinely all hostile. The run
+continues on the unvalidated pool and says so, as a report warning and an error-level log line.
+Refusing to run would turn a network problem into no report at all, which is the one outcome
+that cannot be inspected afterwards.
 
 The check verifies correctness, not speed. A resolver that answers correctly but slowly stays
 in the pool, which is why the table above matters when choosing one.
@@ -386,6 +403,11 @@ would otherwise flood the live set with junk, and a wildcard on `*.dev.example.c
 capable of it as one on the apex — only the parent it sits on can reveal it.
 
 - Every parent domain appearing in the host list is probed, plus the root, with random names.
+  The root is always probed first. Zones are ranked by how many hosts they cover and capped at
+  **500**: each one costs `--wildcard-probes` queries spent before a single host is resolved,
+  and a target naming in depth (`<service>.<env>.<region>.example.com`) produces thousands of
+  distinct zones whose probing alone would consume the stage budget. What the cap leaves out is
+  counted and reported as a warning.
 - A parent is a wildcard only when a **majority** of its probes answer, so one flaky lookup
   cannot condemn a whole branch. The answers of all probes are unioned, which covers wildcards
   that round-robin between addresses.
@@ -601,7 +623,9 @@ Sinks are independent and can be combined in a single run:
   stderr so stdout stays parseable. This is what makes `fastrecon ... | jq` work locally and
   keeps the job's logs readable in Cockpit.
 - **file** — `--output ./results/report.json`; parent directories created as needed. Written
-  atomically (temp file + rename) so a consumer never reads a half-written report.
+  atomically (temp file + rename) so a consumer never reads a half-written report, and with
+  mode `0600`: a report names hosts, open ports and certificates, which is reconnaissance on
+  whoever it describes if the path is shared.
 - **webhook** — `--webhook-url`; an HTTP POST of the full report document as raw JSON
   (`Content-Type: application/json`), unchanged from what the other sinks emit. The target is
   an internal API, not a chat destination, so there is no message formatting and no summary
@@ -704,9 +728,10 @@ scheduler will ever retry, and a truncated run reported as `0` would be a silent
 completeness.
 
 The split runs deeper than the table: a preparation failure is either transient — an
-unreachable resolver list, a health check that left nothing usable — and therefore ours, or a
-mistake in the configuration and therefore the caller's. The HTTP handler makes the same
-split into `500` and `400`.
+unreachable resolver list, for instance — and therefore ours, or a mistake in the
+configuration and therefore the caller's. The HTTP handler makes the same split into `500` and
+`400`. A health check that leaves nothing usable is neither: the run continues on the
+unvalidated pool and warns, for the reason given in §8.
 
 ### 13.4 Delivery is detached from the run
 
