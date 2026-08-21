@@ -52,7 +52,9 @@ func (f *File) Deliver(_ context.Context, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", tmpName, err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
+	// Owner-only: a report names hosts, open ports and certificates, which is
+	// reconnaissance on whoever it describes if the path is shared.
+	if err := os.Chmod(tmpName, 0o600); err != nil {
 		return fmt.Errorf("chmod %s: %w", tmpName, err)
 	}
 	if err := os.Rename(tmpName, f.path); err != nil {

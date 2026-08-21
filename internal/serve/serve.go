@@ -70,6 +70,13 @@ func New(a Runner, cfg *config.Config, log *slog.Logger) (*Server, error) {
 		// whoever finds it, charged to this deployment's API quotas.
 		return nil, errors.New("serve: --api-token is required; refusing to expose an unauthenticated endpoint")
 	}
+	// This deployment builds no sinks: the report is the response. A webhook
+	// configured here passes validation at startup and then never fires, which
+	// from the outside looks exactly like one that fires and is never
+	// received — so it is called out rather than left to be discovered.
+	if cfg.WebhookURL != "" {
+		log.Warn("webhook-url is ignored in serve mode; the report is returned in the response", "url", cfg.WebhookURL)
+	}
 	return &Server{app: a, token: token, log: log}, nil
 }
 
@@ -143,7 +150,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := decodeRequest(r)
+	req, err := decodeRequest(w, r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
@@ -211,9 +218,11 @@ func (s *Server) authorized(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(s.token)) == 1
 }
 
-func decodeRequest(r *http.Request) (runRequest, error) {
+func decodeRequest(w http.ResponseWriter, r *http.Request) (runRequest, error) {
 	var req runRequest
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBodyBytes))
+	// The writer is what lets the server stop reading and close the
+	// connection when a body runs past the limit, instead of draining it.
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	// An unknown field is a caller believing they configured something. Most
 	// of them name an option that is deliberately not caller-settable, and
 	// silently ignoring it would run a scan they did not ask for.
