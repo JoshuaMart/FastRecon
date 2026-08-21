@@ -24,6 +24,16 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Modules the build no longer reaches still show up in an SBOM and in
+      # every vulnerability report generated from this module, so the declared
+      # dependency surface has to match the real one.
+      - name: Dependencies must be tidy
+        run: |
+          go mod tidy -diff || {
+            echo "::error::go.mod/go.sum are not tidy; run 'go mod tidy' and commit the result"
+            exit 1
+          }
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
@@ -58,15 +68,36 @@ jobs:
       # The scan covers the full history, and .gitleaks.toml carries the
       # exemptions for known-fake test fixtures — one literal at a time, never
       # a path-wide hole.
+      # Pinned: an unpinned scanner changes what the build enforces without a
+      # commit saying so, in either direction.
       - name: gitleaks
         run: |
-          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1 \
             detect --source=/repo --no-banner --redact --verbose
+
+  vulnerabilities:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Reports only vulnerabilities in code paths the binary actually reaches,
+      # so a hit is a finding rather than a line in an inventory. The gate
+      # decides what fails the build; see the script for the rule.
+      - name: govulncheck
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 -format json ./... \
+            | python3 .github/scripts/vulncheck-gate.py
 
   image:
     name: Build image
     runs-on: ubuntu-latest
-    needs: [test, secrets]
+    needs: [test, secrets, vulnerabilities]
     permissions:
       contents: read
       packages: write
