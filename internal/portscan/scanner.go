@@ -1,11 +1,5 @@
-// Package portscan finds the open ports of the live hosts.
-//
-// The scanner is a built-in TCP connect scanner. naabu was the intended
-// engine, but it reaches libc through purego to batch raw sends, which forces
-// a dynamically linked binary — one that cannot start in the distroless
-// static image every deployment here is built on. The only thing it offered
-// beyond this scanner was SYN mode, which needs privileges the target
-// environment does not grant anyway.
+// Package portscan finds open ports of live hosts using TCP connect.
+// (naabu discarded: requires dynamic linking + SYN mode needs root)
 package portscan
 
 import (
@@ -50,9 +44,7 @@ type Scanner struct {
 	opts  Options
 	ports portSpec
 	cdn   *cdncheck.Client
-	// scan is the single point where sockets are opened. It is a field so the
-	// planning, batching and result-mapping logic can be tested without
-	// touching the network.
+	// scan allows testing planning/batching/mapping without network access.
 	scan func(ctx context.Context, addresses []string, ports portSpec, limiter *ratelimit.Limiter) (map[string][]int, error)
 }
 
@@ -78,9 +70,7 @@ func New(opts Options) (*Scanner, error) {
 		}
 	}
 
-	// SYN mode is refused rather than silently downgraded: a SYN scan the
-	// process cannot perform finds no open ports at all, which reads exactly
-	// like a host with nothing listening.
+	// SYN mode refused (not silently downgraded); missing results would mimic a closed host.
 	if opts.Mode == ModeSYN {
 		return nil, errors.New("portscan: syn mode is not available in this build; it needs raw sockets, which the serverless and container deployments do not grant. Use --scan-mode=connect")
 	}
@@ -96,27 +86,15 @@ func New(opts Options) (*Scanner, error) {
 // Name identifies the stage implementation.
 func (s *Scanner) Name() string { return "connect" }
 
-// Scan finds the open ports of every live host.
-//
-// Only live hosts are scanned. A dead host has no address to connect to, and
-// a wildcard artifact is not a host at all — scanning either would spend the
-// budget proving something already known.
+// Scan finds open ports of live hosts (dead hosts/wildcards would waste budget on known facts).
 func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortScan, error) {
 	out := pipeline.PortScan{Hosts: hosts}
 
-	// The limiter belongs to the run, not to the scanner. Holding it on the
-	// scanner and stopping it here left a reused instance with a stopped
-	// limiter, whose Wait returns immediately — the second run of a warm
-	// process would silently lose its rate limit entirely.
-	//
-	// One limiter for both passes: one per pass would hand the full
-	// configured rate to each, so --scan-rate would not describe the run.
+	// Limiter on run, not scanner (reuse would deadlock); shared across both passes so --scan-rate describes total.
 	limiter := ratelimit.New(s.opts.Rate)
 	defer limiter.Stop()
 
-	// Several subdomains commonly resolve to one address; scanning it once
-	// and mapping the result back is the difference between one scan and
-	// fifty identical ones.
+	// Index by address (dedup: one scan per address, not per subdomain).
 	byAddress := indexAddresses(hosts)
 	if len(byAddress) == 0 {
 		s.opts.Logger.Info("port scan skipped", "reason", "no live host with an address")
@@ -146,9 +124,7 @@ func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortS
 		merge(open, found)
 	}
 	if len(behindEdge) > 0 {
-		// The restricted pass: a CDN edge answers for thousands of unrelated
-		// customers, so its full port list describes the provider, not this
-		// target.
+		// CDN restricted pass: edge serves thousands of customers, full port list describes provider, not target.
 		found, err := s.scan(ctx, behindEdge, portSpec{List: joinPorts(cdnPorts)}, limiter)
 		if err != nil {
 			return out, err
@@ -168,13 +144,12 @@ func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortS
 	return out, nil
 }
 
-// attach maps the per-address results back onto every host that resolves to
-// that address, and records the CDN determination.
+// attach maps per-address results back to all hosts resolving to each address + CDN flags.
 func (s *Scanner) attach(hosts []report.Host, byAddress map[string][]int, edges map[string]edge, open map[string][]int) []report.Host {
 	out := make([]report.Host, len(hosts))
 	copy(out, hosts)
 
-	// Invert: which addresses belong to each host index.
+	// Invert mapping: addresses per host index.
 	hostAddresses := make(map[int][]string, len(hosts))
 	for addr, indexes := range byAddress {
 		for _, i := range indexes {
@@ -190,8 +165,7 @@ func (s *Scanner) attach(hosts []report.Host, byAddress map[string][]int, edges 
 		sort.Strings(addrs)
 
 		limited := false
-		// Which addresses each port was found on, so a port shared by several
-		// of a host's addresses records all of them.
+		// Track which addresses each port was found on (multi-address hosts record all).
 		sources := map[int][]string{}
 		var ports []int
 		for _, addr := range addrs {
@@ -226,7 +200,7 @@ func (s *Scanner) attach(hosts []report.Host, byAddress map[string][]int, edges 
 	return out
 }
 
-// indexAddresses maps every scannable address to the hosts that resolve to it.
+// indexAddresses maps scannable addresses to their host indices.
 func indexAddresses(hosts []report.Host) map[string][]int {
 	out := map[string][]int{}
 	for i, h := range hosts {
@@ -243,8 +217,7 @@ func indexAddresses(hosts []report.Host) map[string][]int {
 	return out
 }
 
-// splitByEdge separates the addresses that get the full port sweep from those
-// restricted to the web ports.
+// splitByEdge separates full port sweep addresses from web-ports-only CDN addresses.
 func splitByEdge(addresses []string, edges map[string]edge, skipCDN bool) (plain, behindEdge []string) {
 	for _, addr := range addresses {
 		if _, behind := edges[addr]; behind && skipCDN {

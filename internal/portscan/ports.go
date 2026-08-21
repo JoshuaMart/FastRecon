@@ -15,12 +15,10 @@ const (
 	PortsFull    = "full"
 )
 
-// cdnPorts is what a CDN or WAF address is scanned for when the full scan is
-// skipped. It matches the engine's own -exclude-cdn behaviour.
+// cdnPorts: restricted scan for CDN/WAF addresses when full scan is skipped (matches -exclude-cdn).
 var cdnPorts = []int{80, 443}
 
-// webPorts is the curated HTTP-oriented selection: the ports a web service is
-// actually found on, rather than the most common ports overall.
+// webPorts: curated HTTP-oriented selection (actual web service ports, not most common overall).
 var webPorts = []int{
 	80, 81, 88, 443, 591, 2082, 2087, 2095, 2096, 3000, 4243, 4993,
 	5000, 5104, 5108, 5800, 6543, 7000, 7396, 7474, 8000, 8001, 8008,
@@ -30,13 +28,10 @@ var webPorts = []int{
 	12443, 16080, 18091, 18092, 20720, 28017,
 }
 
-// portSpec is a port selection in the form the engine expects: either a
-// top-ports tier or an explicit list.
+// portSpec is a port selection in engine format (top-ports tier or explicit list).
 type portSpec struct {
-	// TopPorts is the engine's tier name ("100", "1000", "full").
-	TopPorts string
-	// List is an explicit port expression, e.g. "80,443,8000-8100".
-	List string
+	TopPorts string // engine tier name ("100", "1000", "full")
+	List     string // explicit expression (e.g. "80,443,8000-8100")
 }
 
 func (p portSpec) String() string {
@@ -46,7 +41,7 @@ func (p portSpec) String() string {
 	return p.List
 }
 
-// parsePorts turns the configured selection into an engine port spec.
+// parsePorts converts configured selection to engine port spec.
 func parsePorts(ports string) (portSpec, error) {
 	switch strings.ToLower(strings.TrimSpace(ports)) {
 	case PortsTop100:

@@ -11,13 +11,7 @@ import (
 	"github.com/projectdiscovery/retryabledns"
 )
 
-// Health-check anchors.
-//
-// The positive anchor is a name with a well-known, stable answer, so a
-// resolver can be caught lying rather than merely being reachable. The
-// negative anchor is a random name that must not exist: a resolver answering
-// it with an address hijacks NXDOMAIN, which would turn every dead host in
-// the report into a live one.
+// Health-check anchors: positive anchor (known answer to catch liars) + negative anchor (NXDOMAIN hijacking).
 const (
 	healthAnchor          = "one.one.one.one"
 	healthNegativeTLD     = "com"
@@ -42,9 +36,7 @@ const (
 
 // HealthOptions configures the validation pass.
 type HealthOptions struct {
-	// Budget bounds the whole pass. Resolvers not reached within it are kept
-	// unchecked and counted, never silently discarded.
-	Budget      time.Duration
+	Budget      time.Duration // bounds the pass; unreached resolvers are counted, not discarded
 	Timeout     time.Duration
 	Concurrency int
 	Logger      *slog.Logger
@@ -58,13 +50,7 @@ type HealthResult struct {
 	Duration  time.Duration
 }
 
-// CheckResolvers removes the resolvers that cannot be trusted to answer
-// correctly.
-//
-// This matters most for the large published lists: they are validated for
-// reachability by whoever publishes them, from wherever their validator runs,
-// which says nothing about reachability from inside this job's network, nor
-// about filtering or NXDOMAIN redirection.
+// CheckResolvers removes untrustworthy resolvers (published lists validated elsewhere; network+filtering may differ).
 func CheckResolvers(ctx context.Context, resolvers []string, opts HealthOptions) HealthResult {
 	start := time.Now()
 	res := HealthResult{}

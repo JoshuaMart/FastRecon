@@ -18,38 +18,30 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/version"
 )
 
-// Partial is embedded by every stage result. A stage can finish without
-// having been exhaustive — a source timed out, half the hosts were resolved
-// before the budget ran out — and that has to reach the report, because a
-// truncated result that claims to be complete is worse than no result.
+// Partial flags non-fatal issues (stage incompleteness must reach the report).
 type Partial struct {
-	// Warnings are non-fatal problems worth putting in the report.
-	Warnings []string
-	// Truncated marks a stage cut short by its deadline.
-	Truncated bool
+	Warnings  []string // non-fatal problems
+	Truncated bool     // stage cut short by deadline
 }
 
-// Enumeration is what an Enumerator produces: the hosts it found, plus the
-// per-source accounting that makes a silently empty source visible.
+// Enumeration is what an Enumerator produces (hosts + per-source accounting).
 type Enumeration struct {
 	Partial
 	Hosts   []string
 	Sources []report.Source
 }
 
-// Resolution is what a Resolver produces: every host it was given, each with
-// its verdict. Dead hosts are kept — a dangling CNAME is a finding, not noise.
+// Resolution is what a Resolver produces (every host + verdict; dead hosts kept as findings).
 type Resolution struct {
 	Partial
 	Hosts []report.Host
 }
 
-// Filtered is the outcome of applying the exclusion patterns.
+// Filtered is the outcome of applying exclusion patterns.
 type Filtered struct {
 	Kept    []string
 	Removed []report.Excluded
-	// Unused lists patterns that matched nothing — almost always a typo.
-	Unused []string
+	Unused  []string // patterns that matched nothing (often typos)
 }
 
 // Enumerator collects subdomains from passive sources.
@@ -70,8 +62,7 @@ type Resolver interface {
 	Resolve(ctx context.Context, hosts []string) (Resolution, error)
 }
 
-// PortScan is what a PortScanner produces: every host it was given, the live
-// ones enriched with their open ports and the CDN determination.
+// PortScan is what a PortScanner produces (hosts + open ports + CDN flags).
 type PortScan struct {
 	Partial
 	Hosts []report.Host
@@ -83,8 +74,7 @@ type PortScanner interface {
 	Scan(ctx context.Context, hosts []report.Host) (PortScan, error)
 }
 
-// Probe is what a Prober produces: the hosts, with the open ports that
-// answered HTTP carrying their service details.
+// Probe is what a Prober produces (hosts with HTTP service details on open ports).
 type Probe struct {
 	Partial
 	Hosts []report.Host
@@ -96,9 +86,7 @@ type Prober interface {
 	Probe(ctx context.Context, hosts []report.Host) (Probe, error)
 }
 
-// Stages holds the implementations wired into a run. A nil field means the
-// stage is not available in this build: the run stops there and says so,
-// rather than reporting an empty result as if it were a finding.
+// Stages holds stage implementations; nil field = unavailable (run stops and reports so).
 type Stages struct {
 	Enumerator  Enumerator
 	Excluder    Excluder
@@ -123,12 +111,7 @@ func New(cfg *config.Config, stages Stages, log *slog.Logger) *Pipeline {
 // ErrNoImplementation is returned by a stage that is not part of this build.
 var ErrNoImplementation = errors.New("stage not implemented in this build")
 
-// Run executes the scope's stages and always returns a report.
-//
-// A stage failure or an expired deadline stops the ladder — every later stage
-// consumes the previous one's output — but the report produced so far is
-// still returned, marked incomplete. A run that ran out of time is data, not
-// an error.
+// Run executes stages and always returns a report (incomplete if stage fails or deadline expires).
 func (p *Pipeline) Run(ctx context.Context) (*report.Report, error) {
 	started := p.now()
 	cfg := p.cfg
@@ -145,8 +128,7 @@ func (p *Pipeline) Run(ctx context.Context) (*report.Report, error) {
 		rep.Warnf("%s", w)
 	}
 
-	// Reserve a slice of the deadline to build and deliver the report, so a
-	// tight budget yields a truncated report instead of a killed process.
+	// Reserve deadline portion for report building/delivery (prevents process kill on tight budget).
 	usable := time.Duration(float64(cfg.Timeout) * (1 - cfg.OutputMargin))
 	budget := NewBudget(cfg.Scope.Stages(), started.Add(usable))
 	budget.now = p.now
@@ -180,7 +162,7 @@ func (p *Pipeline) Run(ctx context.Context) (*report.Report, error) {
 	return rep, nil
 }
 
-// runState carries values between stages.
+// runState carries state between stages.
 type runState struct {
 	report *report.Report
 	hosts  []string
@@ -236,9 +218,7 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 		state.hosts = res.Kept
 		rep.Stats.Excluded = len(res.Removed)
 		rep.Stats.InScope = len(res.Kept)
-		// Publish the surviving hosts now, so an enumeration-only run
-		// reports the subdomains it found rather than just counting them.
-		// The resolve stage replaces these with their live/dead verdict.
+		// Publish hosts for enumeration-only runs; resolve stage replaces these.
 		rep.Hosts = make([]report.Host, 0, len(res.Kept))
 		for _, h := range res.Kept {
 			rep.Hosts = append(rep.Hosts, report.Host{Host: h, Status: report.StatusDiscovered})
@@ -295,14 +275,8 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 	}
 }
 
-// applyPartial folds a stage's non-fatal outcome into the report. A truncated
-// stage does not stop the ladder — the later stages still have their own
-// budget and can work on what was found — but the run stops claiming to be
-// complete.
-//
-// A deadline and an operator stopping the job both cut a stage short, and
-// they are reported differently: a consumer may reasonably retry a run that
-// ran out of time, and must not retry one somebody stopped on purpose.
+// applyPartial folds stage non-fatal outcomes into the report (truncation stops completeness, not the ladder).
+// Deadline vs. cancellation are reported differently (deadline = retryable; cancel = intentional).
 func (p *Pipeline) applyPartial(ctx context.Context, rep *report.Report, st stage.Stage, part Partial) {
 	for _, w := range part.Warnings {
 		rep.Warnf("%s", w)
@@ -322,8 +296,7 @@ func (p *Pipeline) applyPartial(ctx context.Context, rep *report.Report, st stag
 	p.log.Warn("stage truncated", "stage", string(st))
 }
 
-// stop records why the ladder ended early. The report stays valid; only its
-// completeness flags change.
+// stop records why the ladder ended early (report valid, completeness flags updated).
 func (p *Pipeline) stop(rep *report.Report, st stage.Stage, err error) {
 	rep.Run.Completed = false
 	switch {
@@ -343,8 +316,7 @@ func (p *Pipeline) stop(rep *report.Report, st stage.Stage, err error) {
 	}
 }
 
-// logSummary emits the run counters to stderr. In a log-only environment the
-// report itself may go to a webhook, so the outcome has to be legible here.
+// logSummary emits run counters (report may go to webhook, so counters must be in logs).
 func (p *Pipeline) logSummary(rep *report.Report) {
 	p.log.Info("run finished",
 		"run_id", rep.Run.ID,

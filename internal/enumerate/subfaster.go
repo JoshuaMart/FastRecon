@@ -1,9 +1,5 @@
-// Package enumerate collects subdomains from passive sources.
-//
-// The engine is subfaster used as a Go library — a subfinder fork, so its
-// provider-config format is the upstream one. Only its passive agent is used:
-// the CLI runner would read a provider config from the user's home directory,
-// which a container run must not depend on.
+// Package enumerate collects subdomains from passive sources using subfaster (uses upstream provider-config format).
+// (Only passive agent used; CLI config lookup skipped for container compatibility)
 package enumerate
 
 import (
@@ -65,26 +61,19 @@ func NewSubfaster(opts Options) (*Subfaster, error) {
 		return nil, errors.New("enumerate: source timeout must be positive")
 	}
 
-	// The engine's source lookup is case-sensitive, and hands an empty set
-	// straight to os.Exit. Normalizing here means a caller that skipped the
-	// configuration layer cannot walk into that.
+	// Engine's source lookup is case-sensitive and exits on empty set; normalize here to prevent crashes.
 	opts.Sources = lowerAll(opts.Sources)
 	opts.ExcludeSources = lowerAll(opts.ExcludeSources)
 
 	if err := validateSources(append(append([]string{}, opts.Sources...), opts.ExcludeSources...)); err != nil {
 		return nil, err
 	}
-	// The engine calls os.Exit when it ends up with an empty source list, so
-	// the selection has to be checked here rather than discovered there.
+	// Validate selection here (engine calls os.Exit on empty, so catch early).
 	if !opts.All && len(effective(opts.Sources, opts.ExcludeSources)) == 0 {
 		return nil, errors.New("enumerate: no sources selected; every source is excluded")
 	}
 
-	// Credentials are not published here: the engine reads them from the
-	// process environment, which is global, so they are exported once by the
-	// caller before any enumerator exists. Doing it per construction would
-	// mean a process serving several runs rewrote them under the one in
-	// flight.
+	// Credentials exported by caller once (process-global; per-call export would cause conflicts).
 
 	loggerOnce.Do(func() {
 		gologger.DefaultLogger.SetMaxLevel(levels.LevelVerbose)
@@ -97,12 +86,8 @@ func NewSubfaster(opts Options) (*Subfaster, error) {
 // Name identifies the stage implementation.
 func (s *Subfaster) Name() string { return "subfaster" }
 
-// Enumerate queries every selected source concurrently and returns the
-// deduplicated, in-scope result.
-//
-// A source that fails, is skipped or runs out of time degrades the run: it is
-// recorded with its status and the enumeration continues. Losing one source
-// is not a reason to lose the other four.
+// Enumerate queries sources concurrently and returns deduplicated, in-scope results.
+// (Failed/slow sources recorded but don't stop enumeration)
 func (s *Subfaster) Enumerate(ctx context.Context, domain string) (pipeline.Enumeration, error) {
 	agent := passive.New(s.sourceNames(), s.opts.ExcludeSources, s.opts.All, false)
 
@@ -161,9 +146,7 @@ func (s *Subfaster) Enumerate(ctx context.Context, domain string) (pipeline.Enum
 	return out, nil
 }
 
-// sourceStatuses turns the engine's per-source counters into report entries.
-// Every selected source appears, successful or not: a source that silently
-// contributes nothing is exactly what this accounting exists to expose.
+// sourceStatuses converts per-source counters to report entries (all sources listed, even silent ones).
 func (s *Subfaster) sourceStatuses(stats map[string]subscraping.Statistics, errs map[string][]string, timedOut bool) []report.Source {
 	names := s.reportedSources(stats)
 	out := make([]report.Source, 0, len(names))

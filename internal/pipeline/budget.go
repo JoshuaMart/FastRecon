@@ -6,11 +6,7 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/stage"
 )
 
-// Stage weights, used to split the remaining time. They are relative, not
-// absolute: what matters is their ratio.
-//
-// Exclusion has weight zero — it is pure CPU work on an in-memory list, so it
-// gets no dedicated slice and is bounded only by the global deadline.
+// Stage weights split remaining time (relative ratios only; Exclude=0 = CPU-only, no dedicated budget).
 var weights = map[stage.Stage]int{
 	stage.Enumerate: 25,
 	stage.Exclude:   0,
@@ -19,11 +15,7 @@ var weights = map[stage.Stage]int{
 	stage.HTTPProbe: 20,
 }
 
-// Budget splits the run deadline across the stages still to come.
-//
-// Allocation is dynamic rather than fixed up front: each stage receives a
-// share of the time *actually* left, so an enumeration that finishes early
-// hands its unused seconds to the port scan instead of wasting them.
+// Budget splits deadline dynamically across stages (shares of time actually left, not fixed allocations).
 type Budget struct {
 	deadline  time.Time
 	remaining []stage.Stage
@@ -50,9 +42,7 @@ func (b *Budget) Expired() bool { return b.Left() <= 0 }
 // Deadline returns the run deadline.
 func (b *Budget) Deadline() time.Time { return b.deadline }
 
-// Take allocates s its share of the remaining time and marks it, and every
-// stage before it, as consumed. A zero-weight stage gets everything that is
-// left, meaning "no dedicated budget".
+// Take allocates s's share of remaining time (zero-weight stages get all remaining time).
 func (b *Budget) Take(s stage.Stage) time.Duration {
 	left := b.Left()
 	total := 0

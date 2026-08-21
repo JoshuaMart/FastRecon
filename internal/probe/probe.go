@@ -1,9 +1,4 @@
-// Package probe identifies the HTTP services behind the open ports.
-//
-// The client is httpx's, used at the request level rather than through its
-// CLI runner: the runner calls gologger.Fatal — and therefore os.Exit — on
-// several ordinary paths, and its enumeration entry point takes no context,
-// so a run could neither be cancelled nor survive a bad input.
+// Package probe identifies HTTP services behind open ports (httpx library, not CLI; CLI calls os.Exit).
 package probe
 
 import (
@@ -34,10 +29,8 @@ const maxTitleLength = 300
 
 // Options configures the prober.
 type Options struct {
-	Concurrency int
-	// Rate caps probes per second. An HTTP request costs a target far more
-	// than a TCP handshake, so the probe sweep is rate-limited like the scan.
-	Rate            int
+	Concurrency     int
+	Rate            int // HTTP probes are more expensive than TCP handshakes; rate-limited like port scan
 	Timeout         time.Duration
 	Retries         int
 	FollowRedirects bool
@@ -51,14 +44,9 @@ type Options struct {
 type HTTPX struct {
 	opts   Options
 	client *httpx.HTTPX
-	// direct never follows redirects. It is the fallback for a service whose
-	// redirect target is unreachable: following the chain would fail the
-	// whole request and lose a response that is itself a finding.
-	direct *httpx.HTTPX
+	direct *httpx.HTTPX            // no redirects (fallback when target unreachable)
 	tech   *wappalyzer.Wappalyze
-	// probe is the single point where requests happen, so the scheme
-	// selection and result mapping can be tested without a network.
-	probe func(ctx context.Context, host string, port int) *report.HTTP
+	probe  func(ctx context.Context, host string, port int) *report.HTTP // testable entry point
 }
 
 // New builds the prober.

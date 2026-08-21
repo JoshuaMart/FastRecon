@@ -26,27 +26,17 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/stage"
 )
 
-// ErrRuntime marks a preparation failure that is transient rather than a
-// mistake in the configuration: an unreachable resolver list, a health check
-// that found nothing usable. Callers map it to an exit code or a status code,
-// which is the only signal a scheduler or a caller has.
+// ErrRuntime marks transient failures (unreachable resolvers, health check failures).
 var ErrRuntime = errors.New("runtime failure")
 
-// App holds what is settled once per process and reused by every run.
-//
-// The split is not an optimisation. The enumeration engine keys its API keys
-// into globally shared source instances, so credentials cannot vary per run
-// without one run overwriting another's; resolving them here, once, is what
-// makes serving several requests from one process safe.
+// App holds process-level config (not an optimization; credentials are process-global for safety).
 type App struct {
 	cfg      *config.Config
 	log      *slog.Logger
 	creds    map[string]secrets.Credential
 	redactor *secrets.Redactor
 
-	// The resolver pool is loaded and health-checked on first use, then kept:
-	// re-checking a public resolver list on every request would cost more than
-	// the run it serves. A failure is not cached — it is usually the network.
+	// Resolver pool cached after first load (failures not cached; usually network).
 	poolMu       sync.Mutex
 	pool         []string
 	poolWarnings []string
@@ -62,16 +52,14 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	a.creds = a.resolveCredentials()
 	a.redactor = secrets.NewRedactor(a.creds)
 
-	// Published to the environment here, once: it is the only channel the
-	// enumeration engine reads, and it is process-global either way.
+	// Export to environment once (enumeration engine reads process-global values).
 	if err := secrets.Export(a.creds); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-// Redactor returns the process redactor, so a caller can scrub a rendered
-// report before it leaves the process.
+// Redactor returns the process redactor for scrubbing reports.
 func (a *App) Redactor() *secrets.Redactor { return a.redactor }
 
 // Config returns the process-level configuration.
@@ -87,19 +75,16 @@ func (a *App) Run(ctx context.Context, runCfg *config.Config) (*report.Report, e
 	return pipeline.New(runCfg, stages, a.log).Run(ctx)
 }
 
-// resolveCredentials resolves the source keys for every source that may be
-// queried.
+// resolveCredentials resolves API keys for all possible sources.
 func (a *App) resolveCredentials() map[string]secrets.Credential {
 	resolver, err := secrets.NewResolver(a.cfg.ProviderConfig)
 	if err != nil {
-		// A provider config that cannot be read is reported by the stage that
-		// needs it; a run without keys is still a run.
+		// Unreadable config reported by the needy stage; runs without keys are still valid.
 		a.log.Warn("provider config unusable", "error", err)
 		return nil
 	}
 
-	// Cloned: appending to cfg.Sources would write into its backing array
-	// whenever it has spare capacity.
+	// Clone to avoid writes to the backing array when appending.
 	wanted := slices.Clone(a.cfg.Sources)
 	if a.cfg.AllSources {
 		for _, s := range enumerate.Available() {
@@ -110,8 +95,7 @@ func (a *App) resolveCredentials() map[string]secrets.Credential {
 	}
 
 	creds := resolver.Resolve(wanted)
-	// Reported against every source that will be queried, not just the
-	// default five: under --all-sources the two differ completely.
+	// Inventory against all queried sources; --all-sources differs from the five defaults.
 	inv := secrets.Take(wanted, creds)
 	for source, origin := range inv.Configured {
 		a.log.Debug("source credential", "source", source, "origin", origin)
@@ -142,8 +126,7 @@ func (a *App) buildStages(ctx context.Context, cfg *config.Config) (pipeline.Sta
 
 	stages := pipeline.Stages{Enumerator: enumerator, Excluder: excluder}
 
-	// Built only when the scope reaches it: a resolver constructed for an
-	// enumeration-only run would open sockets nothing asked for.
+	// Lazy construction; enumeration-only runs skip unnecessary sockets.
 	if cfg.Scope.Includes(stage.Resolve) {
 		resolvers, warnings, err := a.resolverPool(ctx)
 		if err != nil {
@@ -205,8 +188,7 @@ func (a *App) buildStages(ctx context.Context, cfg *config.Config) (pipeline.Sta
 	return stages, nil
 }
 
-// resolverPool assembles the resolver list once and, unless told otherwise,
-// removes the resolvers that cannot be trusted to answer correctly.
+// resolverPool loads resolver list once, health-checks and caches it.
 func (a *App) resolverPool(ctx context.Context) (resolvers, warnings []string, err error) {
 	a.poolMu.Lock()
 	defer a.poolMu.Unlock()
@@ -222,8 +204,7 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings []string, e
 		Logger: a.log,
 	})
 	if err != nil {
-		// Fetching a list over the network can fail for reasons that have
-		// nothing to do with the configuration being wrong.
+		// Network fetch failures are transient (not configuration errors).
 		if a.cfg.ResolversURL != "" {
 			return nil, nil, fmt.Errorf("%w: %w", ErrRuntime, err)
 		}
@@ -244,10 +225,10 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings []string, e
 		// These reach the report, not just the log: a resolution done through
 		// a pool that lost half its members is a result worth qualifying.
 		if len(health.Dropped) > 0 {
-			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers dropped by the health check", len(health.Dropped), len(resolvers)))
+			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers dropped by health check", len(health.Dropped), len(resolvers)))
 		}
 		if health.Unchecked > 0 {
-			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers were kept unchecked: the health budget ran out", health.Unchecked, len(resolvers)))
+			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers unchecked (health budget exhausted)", health.Unchecked, len(resolvers)))
 		}
 		resolvers = health.Good
 	}

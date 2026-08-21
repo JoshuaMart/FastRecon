@@ -18,26 +18,18 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/version"
 )
 
-// DefaultResolvers is the bundled set: Cloudflare, Google and Quad9's
-// unfiltered endpoints.
-//
-// All three are non-filtering and answer NXDOMAIN for names that do not
-// exist. That matters more here than raw resolver count: a filtering resolver
-// returns a block-page address for a name it dislikes, and a resolver that
-// redirects NXDOMAIN turns every dead host into a live one — corrupting
-// exactly the live/dead split this stage produces.
+// DefaultResolvers: Cloudflare, Google, Quad9 (non-filtering, answer NXDOMAIN correctly).
+// Filtering resolvers and NXDOMAIN redirects corrupt the live/dead split.
 var DefaultResolvers = []string{
 	"1.1.1.1:53", "1.0.0.1:53", // Cloudflare
 	"8.8.8.8:53", "8.8.4.4:53", // Google
 	"9.9.9.10:53", "149.112.112.10:53", // Quad9, unfiltered endpoints
 }
 
-// maxResolverListBytes caps a fetched resolver list. The published lists are
-// well under a megabyte; anything larger is a wrong URL, not a resolver list.
+// maxResolverListBytes caps fetched lists (8MB; published lists are well under 1MB).
 const maxResolverListBytes = 8 << 20
 
-// LoadOptions describes where the resolver list comes from. The sources are
-// merged, so an inline resolver can be added to a fetched list.
+// LoadOptions specifies resolver list sources (merged together).
 type LoadOptions struct {
 	Inline  []string
 	File    string
@@ -46,8 +38,7 @@ type LoadOptions struct {
 	Logger  *slog.Logger
 }
 
-// LoadResolvers assembles the resolver list from every configured source,
-// falling back to the bundled set when none is given.
+// LoadResolvers assembles the resolver list from all sources (falls back to bundled set).
 func LoadResolvers(ctx context.Context, opts LoadOptions) ([]string, error) {
 	if len(opts.Inline) == 0 && opts.File == "" && opts.URL == "" {
 		return DefaultResolvers, nil
@@ -82,8 +73,7 @@ func LoadResolvers(ctx context.Context, opts LoadOptions) ([]string, error) {
 
 	resolvers, malformed := parseResolvers(raw)
 	if len(malformed) > 0 {
-		// Naming them is the point: a list where half the lines are junk is a
-		// wrong file, and silently using the good half hides that.
+		// Name them; silently dropping half a file hides errors.
 		opts.Logger.Warn("resolver entries ignored",
 			"count", len(malformed),
 			"sample", malformed[:min(len(malformed), 5)],

@@ -1,5 +1,4 @@
-// Package runid generates ULID-style identifiers for a run: a millisecond
-// timestamp followed by randomness, so ids sort chronologically as strings.
+// Package runid generates ULID-style identifiers (millisecond timestamp + randomness; chronologically sortable).
 package runid
 
 import (
@@ -16,12 +15,12 @@ func New(t time.Time) string {
 	for i := 0; i < 6; i++ {
 		buf[5-i] = byte(ms >> (8 * i))
 	}
-	// crypto/rand.Read never returns an error; it panics on a broken source.
+	// rand.Read never errors; panics if source broken.
 	_, _ = rand.Read(buf[6:])
 	return encode(buf[:])
 }
 
-// encode renders 128 bits as 26 base32 characters, left-padded to 130 bits.
+// encode renders 128 bits as 26 base32 characters (left-padded to 130 bits).
 func encode(b []byte) string {
 	out := make([]byte, 26)
 	for i := range out {
@@ -34,7 +33,7 @@ func encode(b []byte) string {
 	return string(out)
 }
 
-// bitAt reads bit p of the padded stream: two zero bits, then b.
+// bitAt reads bit p of padded stream (two zero bits, then b).
 func bitAt(b []byte, p int) uint {
 	if p < 2 {
 		return 0

@@ -8,8 +8,7 @@ import (
 	"sync"
 )
 
-// wildcardSet is the set of answers a wildcard record hands out for one parent
-// domain.
+// wildcardSet holds answers a wildcard record returns for one parent domain.
 type wildcardSet struct {
 	addresses map[string]struct{}
 	cnames    map[string]struct{}
@@ -28,8 +27,7 @@ func (w *wildcardSet) covers(addresses, cnames []string) bool {
 	if len(addresses) == 0 {
 		return false
 	}
-	// Every address must belong to the wildcard set. A host that resolves to
-	// the wildcard address *and* one of its own is a real host.
+	// Every address must belong to wildcard set (mixed with own addresses = real host).
 	for _, a := range addresses {
 		if _, ok := w.addresses[a]; !ok {
 			return false
@@ -43,8 +41,7 @@ type wildcards struct {
 	byParent map[string]*wildcardSet
 }
 
-// covers reports whether a host's answers are indistinguishable from the
-// wildcard of one of its parents.
+// covers reports if a host's answers match a parent's wildcard.
 func (w *wildcards) covers(host string, addresses, cnames []string) (string, bool) {
 	if len(w.byParent) == 0 {
 		return "", false
@@ -61,12 +58,7 @@ func (w *wildcards) covers(host string, addresses, cnames []string) (string, boo
 	return "", false
 }
 
-// detectWildcards probes random names under every parent domain that appears
-// in the host list.
-//
-// Detection is per parent, not only at the root: a wildcard on
-// *.dev.example.com is just as capable of flooding the live set as one on the
-// apex, and only the parent it sits on can reveal it.
+// detectWildcards probes random names under every parent domain (per-parent detection catches *.dev.example.com too).
 func (r *DNSX) detectWildcards(ctx context.Context, hosts []string) *wildcards {
 	parents := candidateParents(hosts, r.opts.Domain)
 	out := &wildcards{byParent: make(map[string]*wildcardSet)}

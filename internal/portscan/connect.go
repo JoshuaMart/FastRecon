@@ -10,12 +10,8 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
 )
 
-// scanConnect performs a TCP connect scan.
-//
-// Connect scanning needs no privileges, which is the whole reason it is the
-// default: it is the only mode that works in a serverless job. A completed
-// handshake means the port is open; a refusal means it is closed; a timeout
-// means it is filtered, and only that case is worth retrying.
+// scanConnect performs TCP connect scan (no privileges needed; only serverless-compatible mode).
+// Handshake=open, refusal=closed, timeout=filtered (only filtered worth retrying).
 func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports portSpec, limiter *ratelimit.Limiter) (map[string][]int, error) {
 	list, err := s.expand(ports)
 	if err != nil {
@@ -39,10 +35,7 @@ func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports por
 		wg    sync.WaitGroup
 	)
 
-	// A fixed pool consuming a stream of targets. Spawning one goroutine per
-	// probe would allocate a stack for every (address, port) pair up front —
-	// a full sweep of fifty addresses is millions of them, and the process is
-	// killed for memory long before the deadline it was budgeted.
+	// Fixed pool (not per-probe goroutines; would OOM on large sweeps).
 	queue := make(chan target)
 	for range s.opts.Concurrency {
 		wg.Add(1)

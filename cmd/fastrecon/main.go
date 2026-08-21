@@ -26,13 +26,12 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/version"
 )
 
-// Exit codes. A job scheduler's only signal is the exit status, so an
-// incomplete run, a failed delivery and a fatal error must not look alike.
+// Exit codes (distinct statuses for job schedulers).
 const (
 	exitOK         = 0 // run completed, report emitted
-	exitUsage      = 1 // invalid configuration or usage
-	exitIncomplete = 2 // report emitted, but the run did not finish its scope
-	exitSinkFailed = 3 // report produced, at least one destination failed
+	exitUsage      = 1 // invalid configuration
+	exitIncomplete = 2 // run did not finish its scope
+	exitSinkFailed = 3 // delivery failed
 	exitFatal      = 4 // no report produced
 )
 
@@ -78,8 +77,7 @@ func serveMode(args []string) int {
 		fmt.Fprintf(os.Stderr, "fastrecon: invalid configuration:\n%v\n", err)
 		return exitUsage
 	}
-	// Labelled explicitly rather than guessed: nothing inside the process
-	// distinguishes a function from any other container.
+	// Explicitly labeled; nothing distinguishes a function from other containers.
 	if cfg.Environment == "" {
 		cfg.Environment = config.EnvServerlessFunction
 	}
@@ -172,10 +170,7 @@ func run(args []string) int {
 		log.Debug("config file loaded", "path", cfg.ConfigFile)
 	}
 
-	// A stopped job or a container shutdown arrives as a signal. Cancelling
-	// the run rather than dying on the spot means the partial report still
-	// reaches its destinations. It is created before the stages are built so
-	// that resolver loading and health checking are cancellable too.
+	// Cancel run on signal so partial reports reach their destinations; created early so resolver loading is cancellable.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -213,10 +208,7 @@ func run(args []string) int {
 		return exitUsage
 	}
 
-	// Delivery runs on its own context, detached from the run's. A stopped
-	// job arrives as a signal that cancels ctx, and the whole point of
-	// catching it is that the partial report still reaches its destinations —
-	// which a cancelled context would prevent.
+	// Delivery on detached context; partial reports reach destinations despite signal.
 	deliverCtx, cancelDelivery := deliveryContext(cfg)
 	defer cancelDelivery()
 
@@ -239,8 +231,7 @@ func run(args []string) int {
 	}
 }
 
-// deliveryContext bounds the report delivery, using the slice of the run
-// budget that was reserved for exactly this.
+// deliveryContext allocates budget for report delivery.
 func deliveryContext(cfg *config.Config) (context.Context, context.CancelFunc) {
 	budget := time.Duration(float64(cfg.Timeout) * cfg.OutputMargin)
 	if budget <= 0 {
@@ -282,13 +273,13 @@ func buildSinks(cfg *config.Config, log *slog.Logger) ([]sink.Sink, error) {
 			return nil, err
 		}
 		sinks = append(sinks, w)
-		// Header names only: a webhook header is where the bearer token goes.
+		// Log header names only (values contain bearer tokens).
 		log.Debug("webhook configured", "url", cfg.WebhookURL, "method", cfg.WebhookMethod, "headers", headerNames(cfg.WebhookHeaders))
 	}
 	return sinks, nil
 }
 
-// headerNames lists the configured header names without their values.
+// headerNames extracts header names (omits values).
 func headerNames(headers []string) []string {
 	out := make([]string, 0, len(headers))
 	for _, h := range headers {

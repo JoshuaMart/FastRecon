@@ -1,7 +1,4 @@
-// Package resolve separates the hosts that answer DNS from those that do not.
-//
-// The engine is dnsx used as a Go library: pure Go, unprivileged, and
-// therefore usable in a serverless job where a raw-socket resolver is not.
+// Package resolve separates DNS-answering hosts from non-answering ones (dnsx-backed, serverless-compatible).
 package resolve
 
 import (
@@ -23,24 +20,19 @@ import (
 
 // Options configures the resolver.
 type Options struct {
-	// Domain is the run's root domain, always probed for a wildcard record.
-	Domain      string
-	Resolvers   []string
-	Concurrency int
-	Retries     int
-	Timeout     time.Duration
-	// WildcardProbes is how many random names are resolved per parent domain
-	// to decide whether it carries a wildcard record.
-	WildcardProbes int
+	Domain         string        // run root (always probed for wildcards)
+	Resolvers      []string
+	Concurrency    int
+	Retries        int
+	Timeout        time.Duration
+	WildcardProbes int            // random names per domain to detect wildcard records
 	Logger         *slog.Logger
 }
 
 // DNSX is the dnsx-backed Resolver.
 type DNSX struct {
-	opts Options
-	// query is the single point where DNS actually happens, shared by host
-	// resolution and wildcard probing. Tests replace it.
-	query func(host string) (*retryabledns.DNSData, error)
+	opts  Options
+	query func(host string) (*retryabledns.DNSData, error) // testable DNS query entry point
 }
 
 // New builds the resolver.
@@ -67,9 +59,7 @@ func New(opts Options) (*DNSX, error) {
 
 	client, err := dnsx.New(dnsx.Options{
 		BaseResolvers: resolvers,
-		// The engine counts total attempts, not extra ones, so zero retries
-		// still has to mean one attempt.
-		MaxRetries:    opts.Retries + 1,
+		MaxRetries:    opts.Retries + 1, // engine counts total, not extra; zero retries = one attempt
 		Timeout:       opts.Timeout,
 		QuestionTypes: []uint16{dns.TypeA, dns.TypeAAAA, dns.TypeCNAME},
 	})

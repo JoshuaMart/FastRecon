@@ -15,13 +15,7 @@ type edge struct {
 	Type     string
 }
 
-// classify determines, for every address, whether it belongs to a CDN, WAF or
-// cloud provider range.
-//
-// This runs on every scan regardless of --skip-cdn. Only the restriction is
-// optional: "80 and 443 are the only open ports" is indistinguishable from a
-// genuinely minimal host unless the report says the scan was narrowed on
-// purpose.
+// classify determines if each address is a CDN/WAF/cloud range (always runs; --skip-cdn only restricts ports).
 func classify(client *cdncheck.Client, addresses []string) map[string]edge {
 	out := make(map[string]edge, len(addresses))
 	if client == nil {
@@ -41,9 +35,7 @@ func classify(client *cdncheck.Client, addresses []string) map[string]edge {
 	return out
 }
 
-// cdnEntries builds the report entries for one host: one per provider, each
-// naming the addresses it matched, because a host can have both a CDN address
-// and an origin address.
+// cdnEntries builds report entries per provider (hosts can have both CDN + origin addresses).
 func cdnEntries(addresses []string, edges map[string]edge, limited bool) []report.CDN {
 	byProvider := map[edge][]string{}
 	for _, addr := range addresses {

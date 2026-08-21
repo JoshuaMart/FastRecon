@@ -1,7 +1,6 @@
 package portscan
 
-// The nmap top-ports selections, as published in nmap-services. They are
-// embedded rather than fetched so a run has no data dependency at startup.
+// nmap top-ports selections (embedded to avoid startup data dependencies).
 const (
 	nmapTop100 = "" +
 		"7,9,13,21-23,25-26,37,53,79-81,88,106,110-111,113,119,135,139,143-144,179,199,389,427,443-445," +
