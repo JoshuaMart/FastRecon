@@ -57,8 +57,12 @@ func NewSubfaster(opts Options) (*Subfaster, error) {
 	if opts.Redactor == nil {
 		opts.Redactor = secrets.NewRedactor(nil)
 	}
-	if opts.SourceTimeout <= 0 {
-		return nil, errors.New("enumerate: source timeout must be positive")
+	// The engine takes whole seconds and truncates, so anything under a second
+	// becomes no ceiling at all and lets one hung source eat the whole stage.
+	// The configuration layer rejects it too; this is the package standing on
+	// its own.
+	if opts.SourceTimeout < time.Second {
+		return nil, errors.New("enumerate: source timeout must be at least 1s")
 	}
 
 	// Engine's source lookup is case-sensitive and exits on empty set; normalize here to prevent crashes.

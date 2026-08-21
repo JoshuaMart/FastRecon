@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
 )
@@ -107,8 +108,30 @@ func (s *Scanner) probe(ctx context.Context, t target) bool {
 		if !isInconclusive(err) {
 			return false
 		}
+		// A timeout already cost a full dial budget, which is backoff enough.
+		// Running out of file descriptors did not: retrying that immediately
+		// only spends the next attempt hitting the same ceiling, and with
+		// every worker doing it at once the ceiling does not move.
+		if isExhausted(err) && !sleepCtx(ctx, exhaustionBackoff) {
+			return false
+		}
 	}
 	return false
+}
+
+// exhaustionBackoff is how long a probe waits after running out of local file
+// descriptors, giving the ones in flight time to be released.
+const exhaustionBackoff = 100 * time.Millisecond
+
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // isInconclusive reports whether an error leaves the port's state unknown.
@@ -118,5 +141,11 @@ func isInconclusive(err error) bool {
 		return true
 	}
 	// Local resource exhaustion says nothing about the target either.
+	return isExhausted(err)
+}
+
+// isExhausted reports whether the probe failed on a local limit rather than
+// on anything the target did.
+func isExhausted(err error) bool {
 	return errors.Is(err, syscallEMFILE) || errors.Is(err, syscallENFILE)
 }

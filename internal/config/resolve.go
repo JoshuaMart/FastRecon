@@ -124,6 +124,12 @@ func resolveConfig(fs *pflag.FlagSet, requireDomain bool) (*Config, error) {
 	return cfg, nil
 }
 
+// maxLineBytes raises the line ceiling above the scanner's 64KB default. An
+// exclusion regexp can be long, and a fetched list can arrive as one line with
+// no separators at all; both would otherwise fail with an error that names
+// neither the file nor the cause.
+const maxLineBytes = 1 << 20
+
 // mergeExcludeFile appends the patterns of --exclude-file to the inline ones.
 // Parsing the patterns themselves belongs to the exclusion stage; here they
 // are only collected.
@@ -138,6 +144,7 @@ func (c *Config) mergeExcludeFile() error {
 	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
+	sc.Buffer(nil, maxLineBytes)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {

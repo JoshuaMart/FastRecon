@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/JoshuaMart/FastRecon/internal/report"
 )
 
 var domainRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -150,9 +152,11 @@ func (c *Config) validate(requireDomain bool) error {
 		fail("unknown log-format %q (valid: json, text)", c.LogFormat)
 	}
 
-	// stdout carries the report; sending logs there too would corrupt it.
-	if c.Output == StdoutPath && c.Format == "" {
-		fail("format must be set when writing to stdout")
+	// Every sink renders the same bytes, so the format has to hold up whatever
+	// the destination is. The load path parses it before reaching here; this
+	// is what catches a Config assembled in code.
+	if _, err := report.ParseFormat(string(c.Format)); err != nil {
+		errs = append(errs, err)
 	}
 
 	if c.ResolversFile != "" {

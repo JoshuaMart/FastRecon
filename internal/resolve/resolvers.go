@@ -144,6 +144,10 @@ func fetchResolverList(ctx context.Context, raw string, timeout time.Duration) (
 func scanResolvers(r io.Reader) ([]string, error) {
 	var out []string
 	sc := bufio.NewScanner(r)
+	// Above the scanner's 64KB default: a published list that arrives with no
+	// line separators is malformed, but it should say so rather than fail on
+	// a token-length error.
+	sc.Buffer(nil, 1<<20)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
