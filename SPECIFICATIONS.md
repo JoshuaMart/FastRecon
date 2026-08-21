@@ -798,7 +798,8 @@ right and must appear in the report, not merely be counted in `stats`.
 
 ### 13.2.1 Degraded conditions
 
-`run.degraded` carries machine-readable codes for conditions that narrowed a run.
+`run.degraded` carries machine-readable codes for conditions that narrowed a run, or that
+make part of its output unsafe to conclude from.
 
 It runs **parallel to `warnings`**, which stays prose for a human. Matching on prose works
 until the wording changes and then stops silently — the failure mode this field exists to
@@ -806,7 +807,7 @@ remove. Neither replaces the other.
 
 | Code | Condition |
 |---|---|
-| `resolvers_unvalidated` | the health budget ran out, so part of the pool was used unchecked |
+| `resolvers_unvalidated` | some or all of the pool was used without being validated — the health budget ran out, or every resolver failed the check and the run continued anyway |
 | `wildcard_zones_capped` | more zones held hosts than the run could probe for a wildcard |
 
 ### 13.3 Exit codes

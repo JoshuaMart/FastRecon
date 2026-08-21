@@ -323,6 +323,7 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings, degraded [
 			// pool and says so, in the report as well as the log.
 			a.log.Error("resolver health check dropped every resolver; continuing without validation", "resolvers", len(resolvers))
 			warnings = append(warnings, fmt.Sprintf("all %d resolvers failed the health check and the run continued without validating them: the live/dead split may be wrong", len(resolvers)))
+			degraded = append(degraded, report.DegradedResolversUnvalidated)
 		} else {
 			// These reach the report, not just the log: a resolution done
 			// through a pool that lost half its members is a result worth

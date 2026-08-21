@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -216,5 +217,34 @@ func TestAccessorsExposeWhatTheHandlerNeeds(t *testing.T) {
 	}
 	if a.Redactor() == nil {
 		t.Error("Redactor must never be nil: it is the last line of defence before output")
+	}
+}
+
+// The severe branch — every resolver dropped, the run continuing on an
+// unvalidated pool — must carry the same code as the mild one. Without it a
+// pool that is entirely dead reports degraded: [] while producing deaths that
+// are artefacts of the resolvers, not of the targets.
+func TestUnvalidatedPoolIsFlaggedWhenEveryResolverFails(t *testing.T) {
+	cfg := baseConfig(stage.ScopeResolve)
+	// TEST-NET-1: routable nowhere, so every health probe fails.
+	cfg.Resolvers = []string{"192.0.2.1", "192.0.2.2"}
+	cfg.ValidateResolvers = true
+	cfg.ResolverHealthBudget = 2 * time.Second
+	cfg.ResolverTimeout = 500 * time.Millisecond
+
+	a := newApp(t, cfg)
+	resolvers, warnings, degraded, err := a.resolverPool(context.Background())
+	if err != nil {
+		t.Fatalf("resolverPool refused to run: %v", err)
+	}
+	// The run continues: a dead pool is far more often local than hostile.
+	if len(resolvers) != 2 {
+		t.Errorf("resolvers = %v, want the unvalidated pool kept", resolvers)
+	}
+	if !slices.Contains(degraded, report.DegradedResolversUnvalidated) {
+		t.Errorf("degraded = %v, want %q", degraded, report.DegradedResolversUnvalidated)
+	}
+	if len(warnings) == 0 {
+		t.Error("the prose channel lost the condition")
 	}
 }
