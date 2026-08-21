@@ -43,6 +43,10 @@ func resolveConfig(fs *pflag.FlagSet, requireDomain bool) (*Config, error) {
 	cfg := &Config{ConfigFile: resolvedPath}
 
 	cfg.Domain = l.str("domain")
+	cfg.Targets = l.strs("targets")
+	cfg.TargetsFile = l.str("targets-file")
+	cfg.TargetsURL = l.str("targets-url")
+	cfg.TargetsHeader = l.strs("targets-header")
 	cfg.Exclude = l.strs("exclude")
 	cfg.ExcludeFile = l.str("exclude-file")
 	cfg.ExcludeStrictWildcard = l.bool("exclude-strict-wildcard")
@@ -76,6 +80,7 @@ func resolveConfig(fs *pflag.FlagSet, requireDomain bool) (*Config, error) {
 	cfg.ScanTimeout = l.dur("scan-timeout")
 	cfg.ScanRetries = l.int("scan-retries")
 
+	cfg.ProbeSPKI = l.bool("probe-spki")
 	cfg.ProbeConcurrency = l.int("probe-concurrency")
 	cfg.ProbeRate = l.int("probe-rate")
 	cfg.ProbeTimeout = l.dur("probe-timeout")

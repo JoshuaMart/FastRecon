@@ -53,10 +53,20 @@ type Report struct {
 	Warnings      []string   `json:"warnings,omitempty"`
 }
 
+// Input tells what stage 1 was fed.
+const (
+	InputDomain  = "domain"
+	InputTargets = "targets"
+)
+
 // Run holds the metadata of the execution itself.
 type Run struct {
-	ID       string    `json:"id"`
-	Domain   string    `json:"domain"`
+	ID     string `json:"id"`
+	Domain string `json:"domain"`
+	// Input is "domain" or "targets". A consumer needs it to know what a
+	// missing host means: enumeration is authoritative on presence, never on
+	// absence.
+	Input    string    `json:"input"`
 	Scope    string    `json:"scope"`
 	Stages   []string  `json:"stages"`
 	Started  time.Time `json:"started_at"`
@@ -104,8 +114,11 @@ type Host struct {
 	Addresses []string `json:"addresses,omitempty"`
 	CNAME     []string `json:"cname,omitempty"`
 	Reason    string   `json:"reason,omitempty"`
-	CDN       []CDN    `json:"cdn,omitempty"`
-	Ports     []Port   `json:"ports,omitempty"`
+	// Sources are the enumeration sources that returned this host, sorted so
+	// two runs of the same perimeter compare equal. Absent in targets mode.
+	Sources []string `json:"sources,omitempty"`
+	CDN     []CDN    `json:"cdn,omitempty"`
+	Ports   []Port   `json:"ports,omitempty"`
 }
 
 // CDN records that some of a host's addresses sit behind a CDN, WAF or cloud
@@ -167,6 +180,10 @@ type TLS struct {
 	Issuer    string    `json:"issuer,omitempty"`
 	NotAfter  time.Time `json:"not_after,omitzero"`
 	SANs      []string  `json:"sans,omitempty"`
+	// CertSPKIHash is the lowercase hex SHA-256 of the certificate's
+	// SubjectPublicKeyInfo. It survives renewal when the key is reused, which
+	// is what makes it a pivot; the certificate fingerprint does not.
+	CertSPKIHash string `json:"cert_spki_hash,omitempty"`
 }
 
 // Excluded records a host dropped by an exclusion pattern, with the pattern
@@ -177,12 +194,13 @@ type Excluded struct {
 }
 
 // New starts a report for a run.
-func New(id, domain string, scope stage.Scope, version, environment string, started time.Time) *Report {
+func New(id, domain, input string, scope stage.Scope, version, environment string, started time.Time) *Report {
 	return &Report{
 		SchemaVersion: SchemaVersion,
 		Run: Run{
 			ID:          id,
 			Domain:      domain,
+			Input:       input,
 			Scope:       scope.String(),
 			Stages:      scope.StageNames(),
 			Started:     started.UTC(),

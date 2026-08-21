@@ -194,9 +194,48 @@ themselves, which is what lets that scope be described as sending nothing to the
 The report always states which stages ran, so "no open ports found" is distinguishable from
 "port scanning did not run".
 
-## 6. Stage 1 — Subdomain enumeration
+## 6. Stage 1 — Enumeration, or a supplied list
 
-### 6.1 Engine
+Stage 1 answers "what hosts does this run cover", and it has two implementations.
+
+### 6.0 Why a target list exists
+
+Enumeration is authoritative on **presence** and never on **absence**. If a source rate limits
+or times out, hosts drop out of the report while nothing changed on the target; a `resolve`
+over that output would mark them dead. The per-source accounting makes that situation visible,
+which lets a consumer refuse to conclude — but it never lets it conclude.
+
+Verification therefore needs an **explicit list**, because that is the only shape in which a
+missing answer means something. `--targets`, `--targets-file` and `--targets-url` supply one;
+`--targets-url` is the twin of `--resolvers-url` and exists for the same reason, a job with no
+volume to mount from. `--targets-header` carries the credential for an authenticated endpoint,
+and the URL goes through the secret redactor before it reaches any log.
+
+Decisions:
+
+- **A list replaces stage 1, it does not skip it.** The ladder is unchanged and exclusions
+  still run on its output — a useful second net when a scope rule changed between a run being
+  defined and starting.
+- **`-d/--domain` becomes optional and purely informational.** It labels the report so a
+  consumer can correlate; nothing else reads it.
+- **The root filter does not apply.** A verification list legitimately spans several apexes of
+  one perimeter, so a supplied host is in scope by definition. The rest of the normalization
+  stays: lowercase, trailing dot, IDNA, wildcard label dropped. A host carrying a port is
+  rejected, since ports are a run-level setting.
+- **Wildcard detection derives its parents from the list alone.** A wildcard floods a
+  verification pass just as readily as an enumeration.
+- **An over-large list is an error, never a truncation**, and so is a malformed entry. Both
+  would turn a host that was never queried into a host that did not answer — the exact false
+  death the mode exists to prevent. `--resolvers-url` truncates because a short resolver list
+  still works; a short target list does not.
+- **An empty list refuses to start**, like an empty source selection.
+- **`run.input`** is `domain` or `targets`. In targets mode `sources` is empty and
+  `stats.enumerated` counts the supplied hosts; neither is self-describing, and a consumer
+  reads `input` to know what a missing host means.
+
+### 6.1 Subdomain enumeration
+
+#### Engine
 
 Primary engine: **`subfaster` used as a Go library** (`github.com/melvinsh/subfaster`).
 It is a fork of ProjectDiscovery's subfinder, so it keeps subfinder's provider-config
@@ -222,7 +261,7 @@ so that `subfinder` (library or binary) or a hand-written source can be substitu
 touching the rest of the pipeline. v1 ships the subfaster-backed implementation and no way to
 select another: an option offering a choice of one would be a flag that does nothing.
 
-### 6.2 Required sources
+#### Required sources
 
 These must be supported and enabled by default when credentials are present:
 
@@ -240,7 +279,7 @@ it, and `--all-sources` queries everything the engine knows. `fastrecon sources`
 available names with their key requirement — an unknown name is rejected at startup rather
 than silently ignored, because a misspelled source is a source that never ran.
 
-### 6.3 Behaviour
+#### Behaviour
 
 - Source names are normalized to lower case before they reach the engine, whose lookup is
   case-sensitive and which calls `os.Exit` on an empty selection. An unknown name is still
@@ -253,8 +292,12 @@ than silently ignored, because a misspelled source is a source that never ran.
 - Results are deduplicated, lowercased, and normalized (trailing dot stripped, IDNA/punycode
   normalized, wildcard entries such as `*.example.com` dropped).
 - Out-of-scope results (not equal to the root domain and not a subdomain of it) are dropped.
+- **Each host records the sources that returned it**, sorted. Sorting is not cosmetic: a
+  consumer that deduplicates observations by comparing payloads would be defeated by a set
+  that came back in a different order every run. The attribution is re-applied after the
+  ladder, because the resolve stage rebuilds the host list from scratch.
 
-### 6.4 Rate limits and time ceilings
+#### Rate limits and time ceilings
 
 The intent is **bounded waiting, then abandonment of the source**. Failing fast on the first
 429 discards a source that would have answered a couple of seconds later; waiting without a
@@ -538,8 +581,27 @@ for origin addresses, ports 80 and 443 for the edges.
   either way, so following them buys the final page's title and status at the cost of a
   request per hop to a host that may be out of scope entirely. `--probe-follow-redirects`
   turns it on.
-- TLS SANs discovered here may reveal additional hostnames; v1 **records** them in the report
-  but does not feed them back into the pipeline. (Candidate for v2: a re-enumeration loop.)
+- TLS SANs discovered here may reveal additional hostnames; they are **recorded** but not fed
+  back into the pipeline. (Candidate for later: a re-enumeration loop.)
+
+### 10.2 The certificate public key hash
+
+`cert_spki_hash` is the lowercase hex SHA-256 of the certificate's `SubjectPublicKeyInfo`,
+recorded only for a connection that was itself TLS.
+
+It is the key and deliberately not the certificate: an SPKI hash **survives renewal** when the
+key is reused, which is what makes it correlate infrastructure over time and find an origin
+behind a CDN. `fingerprint_hash.sha256`, which the TLS library does expose, is of the
+certificate and changes every renewal. A pivot also has to *discriminate*, which rules out a
+handshake fingerprint like JARM — every asset behind one CDN shares it. Measured on one
+perimeter: sixteen hosts produced sixteen distinct hashes, while three hosts under one wildcard
+certificate produced one.
+
+It costs a second handshake per HTTPS service. The HTTP client hands back the parsed
+certificate fields rather than the DER, and nothing in it exposes the peer certificate, so the
+value is unreachable from the probe's own response. The extra connection goes through the rate
+limiter like any other, and `--probe-spki=false` opts out. `InsecureSkipVerify` is correct
+here: an expired or self-signed certificate is a finding, not a reason to refuse to look.
 
 ### 10.1 Scheme detection
 

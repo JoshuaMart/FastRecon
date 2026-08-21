@@ -25,7 +25,14 @@ const EnvPrefix = "FASTRECON_"
 // Config is the fully resolved configuration of a single run.
 type Config struct {
 	// Target
-	Domain                string
+	Domain string
+	// Targets replaces enumeration: the run scans exactly these hosts. It is
+	// the only shape in which a missing answer means something.
+	Targets       []string
+	TargetsFile   string
+	TargetsURL    string
+	TargetsHeader []string
+
 	Exclude               []string
 	ExcludeFile           string
 	ExcludeStrictWildcard bool
@@ -68,6 +75,7 @@ type Config struct {
 	ScanRetries     int
 
 	// HTTP probe
+	ProbeSPKI            bool
 	ProbeConcurrency     int
 	ProbeRate            int
 	ProbeRetries         int
@@ -129,6 +137,8 @@ const StdoutPath = "-"
 func (c *Config) Clone() *Config {
 	out := *c
 	out.Exclude = slices.Clone(c.Exclude)
+	out.Targets = slices.Clone(c.Targets)
+	out.TargetsHeader = slices.Clone(c.TargetsHeader)
 	out.Sources = slices.Clone(c.Sources)
 	out.ExcludeSources = slices.Clone(c.ExcludeSources)
 	out.Resolvers = slices.Clone(c.Resolvers)
@@ -136,6 +146,12 @@ func (c *Config) Clone() *Config {
 	out.WebhookHeaders = slices.Clone(c.WebhookHeaders)
 	out.Warnings = slices.Clone(c.Warnings)
 	return &out
+}
+
+// HasTargets reports whether the run scans a supplied list rather than
+// enumerating.
+func (c *Config) HasTargets() bool {
+	return len(c.Targets) > 0 || c.TargetsFile != "" || c.TargetsURL != ""
 }
 
 // Sinks reports which destinations are configured.

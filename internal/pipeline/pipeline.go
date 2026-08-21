@@ -29,6 +29,9 @@ type Enumeration struct {
 	Partial
 	Hosts   []string
 	Sources []report.Source
+	// HostSources attributes each host to the sources that returned it. Empty
+	// in targets mode, where it would mean nothing.
+	HostSources map[string][]string
 }
 
 // Resolution is what a Resolver produces (every host + verdict; dead hosts kept as findings).
@@ -116,9 +119,15 @@ func (p *Pipeline) Run(ctx context.Context) (*report.Report, error) {
 	started := p.now()
 	cfg := p.cfg
 
+	input := report.InputDomain
+	if cfg.HasTargets() {
+		input = report.InputTargets
+	}
+
 	rep := report.New(
 		runid.New(started),
 		cfg.Domain,
+		input,
 		cfg.Scope,
 		version.Version,
 		config.DetectEnvironment(cfg.Environment, false),
@@ -157,6 +166,7 @@ func (p *Pipeline) Run(ctx context.Context) (*report.Report, error) {
 		}
 	}
 
+	attachSources(rep.Hosts, state.sources)
 	rep.Finish(p.now())
 	p.logSummary(rep)
 	return rep, nil
@@ -167,6 +177,9 @@ type runState struct {
 	report *report.Report
 	hosts  []string
 	found  []report.Host
+	// sources is held here because the resolve stage rebuilds the host list
+	// from scratch; attribution attached earlier would otherwise be lost.
+	sources map[string][]string
 }
 
 func (p *Pipeline) runStage(ctx context.Context, st stage.Stage, budget *Budget, state *runState) error {
@@ -205,6 +218,7 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 			return err
 		}
 		state.hosts = res.Hosts
+		state.sources = res.HostSources
 		rep.Sources = res.Sources
 		rep.Stats.Enumerated = len(res.Hosts)
 		p.applyPartial(ctx, rep, st, res.Partial)
@@ -272,6 +286,19 @@ func (p *Pipeline) dispatch(ctx context.Context, st stage.Stage, state *runState
 
 	default:
 		return errors.New("unknown stage " + string(st))
+	}
+}
+
+// attachSources re-applies per-host attribution once the ladder is done,
+// since the resolve stage replaces the host list wholesale.
+func attachSources(hosts []report.Host, sources map[string][]string) {
+	if len(sources) == 0 {
+		return
+	}
+	for i := range hosts {
+		if found := sources[hosts[i].Host]; len(found) > 0 {
+			hosts[i].Sources = found
+		}
 	}
 }
 

@@ -276,3 +276,84 @@ func TestRunCanceledByContext(t *testing.T) {
 		t.Error("cancellation is not a timeout")
 	}
 }
+
+// The resolve stage rebuilds the host list from scratch, so attribution
+// attached at stage 1 has to be re-applied or it silently disappears on any
+// scope past enum.
+func TestSourceAttributionSurvivesResolution(t *testing.T) {
+	cfg := testConfig(t, stage.ScopeResolve)
+	stages := Stages{
+		Enumerator: attributingEnumerator{},
+		Excluder:   fakeExcluder{},
+		Resolver:   fakeResolver{live: []string{"a.example.com"}},
+	}
+
+	rep, err := New(cfg, stages, logging.Discard()).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][]string{}
+	for _, h := range rep.Hosts {
+		got[h.Host] = h.Sources
+	}
+	if len(got["a.example.com"]) != 2 {
+		t.Errorf("a.example.com sources = %v, want both carried through resolution", got["a.example.com"])
+	}
+	// Dead hosts keep their lineage too.
+	if len(got["b.example.com"]) != 1 {
+		t.Errorf("b.example.com sources = %v, want the attribution kept", got["b.example.com"])
+	}
+}
+
+type attributingEnumerator struct{}
+
+func (attributingEnumerator) Name() string { return "attributing" }
+func (attributingEnumerator) Enumerate(context.Context, string) (Enumeration, error) {
+	return Enumeration{
+		Hosts: []string{"a.example.com", "b.example.com"},
+		HostSources: map[string][]string{
+			"a.example.com": {"chaos", "crt"},
+			"b.example.com": {"crt"},
+		},
+	}, nil
+}
+
+// Targets mode carries no attribution, and the field must stay absent rather
+// than appear empty.
+func TestNoAttributionLeavesTheFieldAbsent(t *testing.T) {
+	cfg := testConfig(t, stage.ScopeEnum)
+	stages := Stages{
+		Enumerator: fakeEnumerator{hosts: []string{"a.example.com"}},
+		Excluder:   fakeExcluder{},
+	}
+	rep, err := New(cfg, stages, logging.Discard()).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Hosts[0].Sources != nil {
+		t.Errorf("sources = %v, want nil", rep.Hosts[0].Sources)
+	}
+}
+
+// A consumer needs to know what a missing host means.
+func TestRunRecordsWhichInputWasUsed(t *testing.T) {
+	cfg := testConfig(t, stage.ScopeEnum)
+	stages := Stages{Enumerator: fakeEnumerator{}, Excluder: fakeExcluder{}}
+
+	rep, err := New(cfg, stages, logging.Discard()).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Run.Input != report.InputDomain {
+		t.Errorf("input = %q, want %q", rep.Run.Input, report.InputDomain)
+	}
+
+	cfg.Targets = []string{"a.example.com"}
+	rep, err = New(cfg, stages, logging.Discard()).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Run.Input != report.InputTargets {
+		t.Errorf("input = %q, want %q", rep.Run.Input, report.InputTargets)
+	}
+}

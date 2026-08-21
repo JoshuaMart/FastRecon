@@ -63,6 +63,24 @@ No API key is required to start: two of the five default sources work without
 one, so a first run returns data immediately. Adding keys widens it — see
 [Credentials](#credentials).
 
+## Scanning a known list instead of enumerating
+
+Enumeration answers "what exists". It cannot answer "what still answers": if a source rate
+limits, hosts vanish from the report while nothing changed on the target, and a resolve over
+that output would call them dead.
+
+For verification, supply the hosts:
+
+```sh
+fastrecon --targets-file ./inventory.txt --stages resolve
+fastrecon --targets api.example.com --stages full          # single host, no source queried
+fastrecon --targets-url https://internal/hosts --targets-header "Authorization: Bearer $T"
+```
+
+A list replaces enumeration, it does not skip the stage — exclusions still apply. `-d` becomes
+optional and only labels the report. The report says which input was used in `run.input`, and
+a malformed or over-large list **fails the run** rather than scanning a shortened one.
+
 ## Choosing a scope
 
 The pipeline is a ladder. One value selects how far up it goes, and each rung

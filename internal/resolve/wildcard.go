@@ -143,14 +143,19 @@ func (r *DNSX) probeWildcard(ctx context.Context, parent string) *wildcardSet {
 // The root is always probed and always first: it is the run's own domain, and
 // a wildcard there is the case that turns a whole enumeration into noise.
 func candidateParents(hosts []string, root string) (parents []string, unprobed int) {
-	if root == "" {
-		return nil, 0
+	// With no root — targets mode — every ancestor of the supplied hosts is a
+	// candidate. A wildcard floods a verification pass just as readily.
+	inScope := func(p string) bool {
+		if root == "" {
+			return true
+		}
+		return p != root && strings.HasSuffix(p, "."+root)
 	}
 
 	covered := map[string]int{}
 	for _, h := range hosts {
 		for _, p := range parentsOf(h) {
-			if p != root && strings.HasSuffix(p, "."+root) {
+			if inScope(p) {
 				covered[p]++
 			}
 		}
@@ -170,9 +175,16 @@ func candidateParents(hosts []string, root string) (parents []string, unprobed i
 		return ranked[i] < ranked[j]
 	})
 
-	if len(ranked) > maxWildcardParents-1 {
-		unprobed = len(ranked) - (maxWildcardParents - 1)
-		ranked = ranked[:maxWildcardParents-1]
+	budget := maxWildcardParents
+	if root != "" {
+		budget--
+	}
+	if len(ranked) > budget {
+		unprobed = len(ranked) - budget
+		ranked = ranked[:budget]
+	}
+	if root == "" {
+		return ranked, unprobed
 	}
 	return append([]string{root}, ranked...), unprobed
 }

@@ -22,6 +22,7 @@ import (
 var newlineOnlyFlags = map[string]bool{
 	"probe-header":   true,
 	"webhook-header": true,
+	"targets-header": true,
 }
 
 // patternFlags hold exclusion patterns, which need a rule of their own: a
@@ -44,6 +45,11 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.Float64("output-margin", 0.10, "fraction of the deadline reserved to build and deliver the report")
 
 	fs.String("provider-config", "", "path to the source credentials file (never baked into the image)")
+	fs.StringSlice("targets", nil, "host to scan instead of enumerating (repeatable); replaces stage 1")
+	fs.String("targets-file", "", "file of hosts, one per line, # for comments")
+	fs.String("targets-url", "", "https URL of a host list, fetched at startup (30s ceiling)")
+	fs.StringArray("targets-header", nil, "header for the targets fetch, as 'Name: value' (repeatable)")
+
 	fs.StringSlice("sources", RequiredSources, "enumeration sources to query (repeatable); see `fastrecon sources`")
 	fs.StringSlice("exclude-sources", nil, "sources to remove from the selection (repeatable)")
 	fs.Bool("all-sources", false, "query every source the engine knows, not just the selection")
@@ -74,6 +80,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.Int("probe-retries", 1, "retries per HTTP probe")
 	fs.Bool("probe-follow-redirects", false, "follow redirects while probing; the Location target is recorded either way")
 	fs.Int("probe-max-redirects", 5, "maximum redirect hops")
+	fs.Bool("probe-spki", true, "hash the certificate public key of each HTTPS service; costs one handshake per service")
 	fs.String("probe-user-agent", "", "User-Agent sent while probing; empty uses the built-in one")
 	fs.StringArray("probe-header", nil, "extra header sent while probing, as 'Name: value' (repeatable)")
 

@@ -329,11 +329,17 @@ func TestCandidateParentsCapsByCoverage(t *testing.T) {
 	}
 }
 
+// An empty domain is valid: targets mode has no root.
+func TestNewAcceptsAnEmptyDomain(t *testing.T) {
+	if _, err := New(Options{Concurrency: 1, Timeout: time.Second, WildcardProbes: 1, Logger: discardLogger()}); err != nil {
+		t.Errorf("New rejected a targets-mode configuration: %v", err)
+	}
+}
+
 func TestNewRejectsUnusableOptions(t *testing.T) {
 	base := Options{Domain: "example.com", Concurrency: 1, Timeout: time.Second, WildcardProbes: 1, Logger: discardLogger()}
 	for name, mutate := range map[string]func(*Options){
 		"no logger":      func(o *Options) { o.Logger = nil },
-		"no domain":      func(o *Options) { o.Domain = "" },
 		"no concurrency": func(o *Options) { o.Concurrency = 0 },
 		"no timeout":     func(o *Options) { o.Timeout = 0 },
 		"no probes":      func(o *Options) { o.WildcardProbes = 0 },
@@ -346,5 +352,50 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 	}
 	if _, err := New(base); err != nil {
 		t.Errorf("New rejected valid options: %v", err)
+	}
+}
+
+// With no root — targets mode — parents come from the host list alone, and an
+// empty string must never become a candidate.
+func TestCandidateParentsWithoutARoot(t *testing.T) {
+	got, unprobed := candidateParents([]string{"a.dev.example.com", "www.other.net"}, "")
+	if unprobed != 0 {
+		t.Errorf("unprobed = %d, want 0", unprobed)
+	}
+	slices.Sort(got)
+	want := []string{"dev.example.com", "example.com", "other.net"}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("candidateParents = %v, want %v", got, want)
+	}
+	for _, p := range got {
+		if p == "" {
+			t.Error("the empty string was queued as a parent to probe")
+		}
+	}
+}
+
+// A verification list legitimately spans several apexes of one perimeter.
+func TestWildcardDetectionSpansSeveralApexes(t *testing.T) {
+	f := &fakeDNS{
+		wildcards: map[string]*retryabledns.DNSData{
+			"dev.example.com": {A: []string{"203.0.113.30"}, StatusCode: "NOERROR"},
+		},
+		answers: map[string]*retryabledns.DNSData{
+			"www.other.net": {Host: "www.other.net", A: []string{"93.184.216.34"}, StatusCode: "NOERROR"},
+		},
+	}
+	r := newResolver(t, "", f)
+
+	res, err := r.Resolve(context.Background(), []string{"a.dev.example.com", "www.other.net"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byHost(res.Hosts)
+	if got["a.dev.example.com"].Status != report.StatusWildcard {
+		t.Errorf("a.dev = %+v, want wildcard", got["a.dev.example.com"])
+	}
+	if got["www.other.net"].Status != report.StatusLive {
+		t.Errorf("other.net host = %+v, want live: a different apex is still in scope", got["www.other.net"])
 	}
 }

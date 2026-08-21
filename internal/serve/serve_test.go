@@ -57,7 +57,7 @@ func (f *fakeRunner) Run(ctx context.Context, cfg *config.Config) (*report.Repor
 	if f.err != nil {
 		return nil, f.err
 	}
-	rep := report.New("01TEST", cfg.Domain, cfg.Scope, "test", cfg.Environment, time.Now())
+	rep := report.New("01TEST", cfg.Domain, report.InputDomain, cfg.Scope, "test", cfg.Environment, time.Now())
 	rep.Finish(time.Now())
 	return rep, nil
 }

@@ -40,8 +40,6 @@ func New(opts Options) (*DNSX, error) {
 	switch {
 	case opts.Logger == nil:
 		return nil, errors.New("resolve: logger is required")
-	case opts.Domain == "":
-		return nil, errors.New("resolve: domain is required")
 	case opts.Concurrency < 1:
 		return nil, errors.New("resolve: concurrency must be at least 1")
 	case opts.Timeout <= 0:

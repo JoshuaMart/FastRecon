@@ -26,12 +26,29 @@ func (c *Config) validate(requireDomain bool) error {
 	var errs []error
 	fail := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 
+	// With targets the domain is informational: it labels the report so a
+	// consumer can correlate, and nothing else reads it.
+	if c.HasTargets() {
+		requireDomain = false
+	}
 	if requireDomain || c.Domain != "" {
 		domain, err := NormalizeDomain(c.Domain)
 		if err != nil {
 			fail("%w", err)
 		}
 		c.Domain = domain
+	}
+
+	if err := validateHeaders("targets-header", c.TargetsHeader); err != nil {
+		errs = append(errs, err)
+	}
+	if c.TargetsFile != "" {
+		if _, err := os.Stat(c.TargetsFile); err != nil {
+			fail("targets-file %q is not readable: %v", c.TargetsFile, err)
+		}
+	}
+	if len(c.TargetsHeader) > 0 && c.TargetsURL == "" {
+		fail("targets-header set without targets-url")
 	}
 
 	if c.Timeout <= 0 {

@@ -38,6 +38,7 @@ type Options struct {
 	MaxRedirects    int
 	UserAgent       string
 	Headers         []string
+	SPKI            bool // hash each HTTPS service's public key; costs one handshake
 	Logger          *slog.Logger
 }
 
@@ -316,6 +317,9 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*re
 	// otherwise attach that other endpoint's certificate to this port.
 	if scheme == "https" {
 		svc.TLS = certificate(resp)
+		if h.opts.SPKI && svc.TLS != nil {
+			svc.TLS.CertSPKIHash = h.spkiHash(ctx, host, port)
+		}
 	}
 	if final := finalURL(resp); final != "" && final != target && final != canonical {
 		svc.FinalURL = final

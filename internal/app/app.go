@@ -125,19 +125,49 @@ func (a *App) resolveCredentials() map[string]secrets.Credential {
 // exceptions. The two cached engines below are the deliberate counterpart:
 // they take no run-scoped option at all.
 func (a *App) buildStages(ctx context.Context, cfg *config.Config) (pipeline.Stages, error) {
-	enumerator, err := enumerate.NewSubfaster(enumerate.Options{
-		Sources:        cfg.Sources,
-		ExcludeSources: cfg.ExcludeSources,
-		All:            cfg.AllSources,
-		SourceTimeout:  cfg.SourceTimeout,
-		Credentials:    a.creds,
-		Redactor:       a.redactor,
-		Logger:         a.log,
-	})
+	enumerator, err := a.stageOne(ctx, cfg)
 	if err != nil {
 		return pipeline.Stages{}, err
 	}
+	return a.rest(ctx, cfg, enumerator)
+}
 
+// stageOne is either enumeration or a supplied list. A list replaces the
+// stage rather than skipping it, so exclusions still run on its output.
+func (a *App) stageOne(ctx context.Context, cfg *config.Config) (pipeline.Enumerator, error) {
+	if !cfg.HasTargets() {
+		return enumerate.NewSubfaster(enumerate.Options{
+			Sources:        cfg.Sources,
+			ExcludeSources: cfg.ExcludeSources,
+			All:            cfg.AllSources,
+			SourceTimeout:  cfg.SourceTimeout,
+			Credentials:    a.creds,
+			Redactor:       a.redactor,
+			Logger:         a.log,
+		})
+	}
+
+	hosts, err := enumerate.LoadTargets(ctx, enumerate.TargetOptions{
+		Inline:   cfg.Targets,
+		File:     cfg.TargetsFile,
+		URL:      cfg.TargetsURL,
+		Headers:  cfg.TargetsHeader,
+		Redactor: a.redactor,
+		Logger:   a.log,
+	})
+	if err != nil {
+		// A list fetched over the network can fail for reasons unrelated to
+		// the configuration being wrong.
+		if cfg.TargetsURL != "" {
+			return nil, fmt.Errorf("%w: %w", ErrRuntime, err)
+		}
+		return nil, err
+	}
+	return enumerate.NewList(hosts, a.log)
+}
+
+// rest wires exclusion and everything the scope reaches beyond it.
+func (a *App) rest(ctx context.Context, cfg *config.Config, enumerator pipeline.Enumerator) (pipeline.Stages, error) {
 	excluder, err := exclude.New(cfg.Exclude, cfg.ExcludeStrictWildcard)
 	if err != nil {
 		return pipeline.Stages{}, fmt.Errorf("invalid exclusions:\n%w", err)
@@ -241,6 +271,7 @@ func (a *App) httpProber() (*probe.HTTPX, error) {
 		MaxRedirects:    a.cfg.ProbeMaxRedirects,
 		UserAgent:       a.cfg.ProbeUserAgent,
 		Headers:         a.cfg.ProbeHeaders,
+		SPKI:            a.cfg.ProbeSPKI,
 		Logger:          a.log,
 	})
 	if err != nil {

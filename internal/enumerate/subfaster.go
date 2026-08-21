@@ -108,6 +108,7 @@ func (s *Subfaster) Enumerate(ctx context.Context, domain string) (pipeline.Enum
 	var (
 		hosts        []string
 		seen         = map[string]struct{}{}
+		bySource     = map[string]map[string]struct{}{}
 		errsBySource = map[string][]string{}
 		outOfScope   int
 	)
@@ -124,19 +125,26 @@ func (s *Subfaster) Enumerate(ctx context.Context, domain string) (pipeline.Enum
 				outOfScope++
 				continue
 			}
-			if _, dup := seen[host]; dup {
-				continue
+			if _, dup := seen[host]; !dup {
+				seen[host] = struct{}{}
+				hosts = append(hosts, host)
 			}
-			seen[host] = struct{}{}
-			hosts = append(hosts, host)
+			// Lineage: which source returned this host.
+			if res.Source != "" {
+				if bySource[host] == nil {
+					bySource[host] = map[string]struct{}{}
+				}
+				bySource[host][res.Source] = struct{}{}
+			}
 		}
 	}
 	sort.Strings(hosts)
 
 	timedOut := ctx.Err() != nil
 	out := pipeline.Enumeration{
-		Hosts:   hosts,
-		Sources: s.sourceStatuses(agent.GetStatistics(), errsBySource, timedOut),
+		Hosts:       hosts,
+		Sources:     s.sourceStatuses(agent.GetStatistics(), errsBySource, timedOut),
+		HostSources: flatten(bySource),
 	}
 	out.Truncated = timedOut
 	if outOfScope > 0 {
@@ -300,6 +308,21 @@ func rateLimited(msg string) bool {
 		}
 	}
 	return false
+}
+
+// flatten sorts each host's sources, so two runs of the same perimeter
+// compare equal downstream.
+func flatten(in map[string]map[string]struct{}) map[string][]string {
+	out := make(map[string][]string, len(in))
+	for host, set := range in {
+		names := make([]string, 0, len(set))
+		for name := range set {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		out[host] = names
+	}
+	return out
 }
 
 func dedupe(in []string) []string {

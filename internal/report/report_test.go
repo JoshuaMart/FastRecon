@@ -13,7 +13,7 @@ import (
 func sample(t *testing.T) *Report {
 	t.Helper()
 	started := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	r := New("01ABC", "example.com", stage.ScopeFull, "1.2.3", "serverless-job", started)
+	r := New("01ABC", "example.com", InputDomain, stage.ScopeFull, "1.2.3", "serverless-job", started)
 	r.Stats.Enumerated = 3
 	r.Stats.Excluded = 1
 	r.Stats.InScope = 2
