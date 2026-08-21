@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/projectdiscovery/httpx/common/httpx"
+	"github.com/projectdiscovery/utils/errkit"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 
 	"github.com/JoshuaMart/FastRecon/internal/pipeline"
@@ -230,14 +231,51 @@ func (h *HTTPX) probeOne(ctx context.Context, host string, port int) *report.HTT
 		if ctx.Err() != nil {
 			return nil
 		}
-		if svc := h.request(ctx, scheme, host, port); svc != nil {
+		svc, err := h.request(ctx, scheme, host, port)
+		if svc != nil {
 			return svc
+		}
+		// Nothing accepted the connection. The plain-HTTP attempt dials the
+		// same endpoint and would be refused identically, so it is skipped —
+		// on a wide sweep that is the difference between one wasted probe
+		// budget and two for every port that closed since the scan saw it.
+		if dialFailed(err) {
+			return nil
 		}
 	}
 	return nil
 }
 
-func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) *report.HTTP {
+// dialFailed reports whether the connection failed in a way that says
+// something about the endpoint rather than about the scheme: refused,
+// unreachable, no such host. Retrying those over plain HTTP dials the same
+// endpoint and fails the same way.
+//
+// A timeout is deliberately not one of them. Waiting is exactly how a
+// plain-HTTP server answers a TLS ClientHello, and that is the case the
+// second attempt exists for.
+//
+// The client replaces the transport error with its own type, so the
+// underlying *net.OpError is gone by the time it arrives here — only the
+// classification survives, which is why this asks the library rather than
+// unwrapping. The *net.OpError branch still catches an error that reached
+// this function without passing through the client.
+func dialFailed(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return false
+	}
+	if errkit.GetErrorKind(err, errkit.ErrKindNetworkPermanent).Is(errkit.ErrKindNetworkPermanent) {
+		return true
+	}
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*report.HTTP, error) {
 	// Connect to the explicit port, always; only the recorded URL is
 	// canonical. Rendering https://host:443 as https://host is not cosmetic:
 	// it makes a scheme on a non-default port — TLS answering on 80, say —
@@ -258,7 +296,7 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) *rep
 	}
 	if err != nil {
 		h.opts.Logger.Debug("probe failed", "target", target, "error", err)
-		return nil
+		return nil, err
 	}
 
 	svc := &report.HTTP{
@@ -282,7 +320,7 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) *rep
 	if final := finalURL(resp); final != "" && final != target && final != canonical {
 		svc.FinalURL = final
 	}
-	return svc
+	return svc, nil
 }
 
 // do issues one request with the given client.

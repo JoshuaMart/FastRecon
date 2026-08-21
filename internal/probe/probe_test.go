@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -290,6 +291,67 @@ func TestProbeOneReturnsNothingOnAClosedPort(t *testing.T) {
 
 	if got := newRealProber(t, false).probeOne(context.Background(), host, port); got != nil {
 		t.Errorf("service = %+v, want nothing on a closed port", got)
+	}
+}
+
+// A refused connection must survive the client's error wrapping as something
+// dialFailed recognises. If it does not, the second scheme is attempted on
+// every closed port and the short circuit is dead code that costs a full
+// probe budget per port.
+func TestRefusedConnectionIsRecognisedThroughTheClient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	host, port := hostPort(t, srv.URL)
+	srv.Close()
+
+	h := newRealProber(t, false)
+	svc, err := h.request(context.Background(), "https", host, port)
+	if svc != nil {
+		t.Fatalf("service = %+v, want nothing on a closed port", svc)
+	}
+	if !dialFailed(err) {
+		t.Errorf("dialFailed(%v) = false, want true: the plain-HTTP retry cannot be skipped", err)
+	}
+}
+
+// The mirror of the case above: a timeout leaves the port's nature unknown,
+// and a plain-HTTP server that simply waits on a TLS ClientHello is the whole
+// reason the second scheme is tried at all.
+func TestTimeoutDoesNotSkipTheSecondScheme(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	// Accept and then say nothing, which is how a plain-text service reacts
+	// to a handshake it cannot parse.
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+		}
+	}()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	h, err := New(Options{
+		Concurrency:  1,
+		Timeout:      300 * time.Millisecond,
+		Retries:      0,
+		MaxRedirects: 1,
+		Logger:       discardLogger(),
+	})
+	if err != nil {
+		t.Skip("cannot build a prober here:", err)
+	}
+
+	_, reqErr := h.request(context.Background(), "https", addr.IP.String(), addr.Port)
+	if reqErr == nil {
+		t.Fatal("want an error from a socket that never answers")
+	}
+	if dialFailed(reqErr) {
+		t.Errorf("dialFailed(%v) = true, want false: a hanging port must still be tried in plain HTTP", reqErr)
 	}
 }
 
