@@ -9,17 +9,25 @@ import (
 	"time"
 
 	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
+	"github.com/JoshuaMart/FastRecon/internal/report"
 )
 
 // scanConnect performs TCP connect scan (no privileges needed; only serverless-compatible mode).
 // Handshake=open, refusal=closed, timeout=filtered (only filtered worth retrying).
-func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports portSpec, limiter *ratelimit.Limiter) (map[string][]int, error) {
+// scanResult pairs the open ports with what each address was actually probed
+// for, so an empty port list is distinguishable from an absent sweep.
+type scanResult struct {
+	open  map[string][]int
+	tally map[string]*report.Scan
+}
+
+func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports portSpec, limiter *ratelimit.Limiter) (scanResult, error) {
 	list, err := s.expand(ports)
 	if err != nil {
-		return nil, err
+		return scanResult{}, err
 	}
 	if len(list) == 0 || len(addresses) == 0 {
-		return map[string][]int{}, nil
+		return scanResult{open: map[string][]int{}, tally: map[string]*report.Scan{}}, nil
 	}
 
 	s.opts.Logger.Debug("connect scan started",
@@ -32,6 +40,7 @@ func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports por
 
 	var (
 		found = map[string][]int{}
+		tally = map[string]*report.Scan{}
 		mu    sync.Mutex
 		wg    sync.WaitGroup
 	)
@@ -49,11 +58,16 @@ func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports por
 				if !limiter.Wait(ctx) {
 					return
 				}
-				if s.probe(ctx, t) {
-					mu.Lock()
-					found[t.address] = append(found[t.address], t.port)
-					mu.Unlock()
+				res := s.probe(ctx, t)
+				if res == outcomeSkipped {
+					continue
 				}
+				mu.Lock()
+				count(tally, t.address, res)
+				if res == outcomeOpen {
+					found[t.address] = append(found[t.address], t.port)
+				}
+				mu.Unlock()
 			}
 		}()
 	}
@@ -61,7 +75,28 @@ func (s *Scanner) scanConnect(ctx context.Context, addresses []string, ports por
 	feed(ctx, queue, addresses, list)
 	wg.Wait()
 
-	return found, nil
+	return scanResult{open: found, tally: tally}, nil
+}
+
+// count records one concluded probe. Scanned tracks attempts, so the four
+// buckets always sum to it.
+func count(tally map[string]*report.Scan, address string, res outcome) {
+	t := tally[address]
+	if t == nil {
+		t = &report.Scan{}
+		tally[address] = t
+	}
+	t.Scanned++
+	switch res {
+	case outcomeOpen:
+		t.Open++
+	case outcomeRefused:
+		t.Refused++
+	case outcomeFiltered:
+		t.Filtered++
+	case outcomeUnknown:
+		t.Unknown++
+	}
 }
 
 type target struct {
@@ -90,33 +125,53 @@ func feed(ctx context.Context, queue chan<- target, addresses []string, ports []
 
 // probe reports whether a TCP handshake completes, retrying only the
 // inconclusive cases.
-func (s *Scanner) probe(ctx context.Context, t target) bool {
+// outcome is what one probe concluded. The four are kept apart because a
+// report that only lists open ports says the same thing for opposite
+// findings: nothing listening and nothing attempted.
+type outcome int
+
+const (
+	// outcomeSkipped is a probe the run never made; it counts as nothing.
+	outcomeSkipped outcome = iota
+	outcomeOpen
+	outcomeRefused
+	outcomeFiltered
+	// outcomeUnknown is a local limit, which says nothing about the target.
+	outcomeUnknown
+)
+
+func (s *Scanner) probe(ctx context.Context, t target) outcome {
 	addr := net.JoinHostPort(t.address, strconv.Itoa(t.port))
 	dialer := &net.Dialer{Timeout: s.opts.Timeout}
 
+	last := outcomeSkipped
 	for attempt := 0; attempt <= s.opts.Retries; attempt++ {
 		if ctx.Err() != nil {
-			return false
+			return last
 		}
 		conn, err := dialer.DialContext(ctx, "tcp", addr)
 		if err == nil {
 			_ = conn.Close()
-			return true
+			return outcomeOpen
 		}
 		// A refusal is a definitive answer: the port is closed. Retrying it
 		// would multiply the work for no new information.
 		if !isInconclusive(err) {
-			return false
+			return outcomeRefused
+		}
+		last = outcomeFiltered
+		if isExhausted(err) {
+			last = outcomeUnknown
 		}
 		// A timeout already cost a full dial budget, which is backoff enough.
 		// Running out of file descriptors did not: retrying that immediately
 		// only spends the next attempt hitting the same ceiling, and with
 		// every worker doing it at once the ceiling does not move.
 		if isExhausted(err) && !sleepCtx(ctx, exhaustionBackoff) {
-			return false
+			return last
 		}
 	}
-	return false
+	return last
 }
 
 // exhaustionBackoff is how long a probe waits after running out of local file

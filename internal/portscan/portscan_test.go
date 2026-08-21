@@ -130,7 +130,7 @@ func TestCDNEntriesGroupPerProvider(t *testing.T) {
 	}
 }
 
-func newScanner(t *testing.T, skipCDN bool, scan func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error)) *Scanner {
+func newScanner(t *testing.T, skipCDN bool, scan func(context.Context, []string, portSpec, *ratelimit.Limiter) (scanResult, error)) *Scanner {
 	t.Helper()
 	return &Scanner{
 		opts:  Options{SkipCDN: skipCDN, Mode: ModeConnect, Logger: discardLogger()},
@@ -143,9 +143,9 @@ func newScanner(t *testing.T, skipCDN bool, scan func(context.Context, []string,
 // onto every one of them.
 func TestScanMapsResultsBackOntoSharedAddresses(t *testing.T) {
 	var passes [][]string
-	n := newScanner(t, true, func(_ context.Context, addresses []string, _ portSpec, _ *ratelimit.Limiter) (map[string][]int, error) {
+	n := newScanner(t, true, func(_ context.Context, addresses []string, _ portSpec, _ *ratelimit.Limiter) (scanResult, error) {
 		passes = append(passes, addresses)
-		return map[string][]int{"1.2.3.4": {80, 443}}, nil
+		return scanResult{open: map[string][]int{"1.2.3.4": {80, 443}}}, nil
 	})
 
 	hosts := []report.Host{
@@ -172,8 +172,8 @@ func TestScanMapsResultsBackOntoSharedAddresses(t *testing.T) {
 }
 
 func TestScanDeduplicatesPortsAcrossAHostAddresses(t *testing.T) {
-	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error) {
-		return map[string][]int{"1.2.3.4": {443, 80}, "5.6.7.8": {80, 8080}}, nil
+	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (scanResult, error) {
+		return scanResult{open: map[string][]int{"1.2.3.4": {443, 80}, "5.6.7.8": {80, 8080}}}, nil
 	})
 
 	hosts := []report.Host{{Host: "a.example.com", Status: report.StatusLive, Addresses: []string{"1.2.3.4", "5.6.7.8"}}}
@@ -196,9 +196,9 @@ func TestScanDeduplicatesPortsAcrossAHostAddresses(t *testing.T) {
 
 func TestScanWithNoLiveHostDoesNothing(t *testing.T) {
 	called := false
-	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error) {
+	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (scanResult, error) {
 		called = true
-		return nil, nil
+		return scanResult{}, nil
 	})
 
 	res, err := n.Scan(context.Background(), []report.Host{{Host: "dead.example.com", Status: report.StatusDead}})
@@ -214,8 +214,8 @@ func TestScanWithNoLiveHostDoesNothing(t *testing.T) {
 }
 
 func TestScanReportsTruncationWhenTheDeadlinePasses(t *testing.T) {
-	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error) {
-		return map[string][]int{"1.2.3.4": {80}}, nil
+	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (scanResult, error) {
+		return scanResult{open: map[string][]int{"1.2.3.4": {80}}}, nil
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -365,10 +365,10 @@ func TestConnectScanFindsAListeningPortAndNotAClosedOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(found["127.0.0.1"], openPort) {
+	if !slices.Contains(found.open["127.0.0.1"], openPort) {
 		t.Errorf("found = %v, want the listening port %d", found, openPort)
 	}
-	if slices.Contains(found["127.0.0.1"], closedPort) {
+	if slices.Contains(found.open["127.0.0.1"], closedPort) {
 		t.Errorf("found = %v, must not contain the closed port %d", found, closedPort)
 	}
 }
@@ -449,12 +449,12 @@ func TestScanConnectGoroutinesStayBounded(t *testing.T) {
 // unlimited, which is invisible until a target notices.
 func TestRateLimitStillAppliesOnASecondScan(t *testing.T) {
 	var seen []*ratelimit.Limiter
-	s := newScanner(t, false, func(_ context.Context, _ []string, _ portSpec, l *ratelimit.Limiter) (map[string][]int, error) {
+	s := newScanner(t, false, func(_ context.Context, _ []string, _ portSpec, l *ratelimit.Limiter) (scanResult, error) {
 		seen = append(seen, l)
 		if !l.Wait(context.Background()) {
 			t.Error("the limiter refused a token on a live context")
 		}
-		return map[string][]int{"1.2.3.4": {80}}, nil
+		return scanResult{open: map[string][]int{"1.2.3.4": {80}}}, nil
 	})
 	s.opts.Rate = 100
 
@@ -477,8 +477,8 @@ func TestRateLimitStillAppliesOnASecondScan(t *testing.T) {
 // Without recording which address a port came from, one service behind ten
 // names is indistinguishable from ten services.
 func TestPortsRecordTheAddressTheyWereFoundOn(t *testing.T) {
-	n := newScanner(t, false, func(context.Context, []string, portSpec, *ratelimit.Limiter) (map[string][]int, error) {
-		return map[string][]int{"1.2.3.4": {8080}, "5.6.7.8": {8080, 443}}, nil
+	n := newScanner(t, false, func(context.Context, []string, portSpec, *ratelimit.Limiter) (scanResult, error) {
+		return scanResult{open: map[string][]int{"1.2.3.4": {8080}, "5.6.7.8": {8080, 443}}}, nil
 	})
 
 	hosts := []report.Host{
@@ -521,5 +521,95 @@ func TestPortsRecordTheAddressTheyWereFoundOn(t *testing.T) {
 				t.Errorf("443 addresses = %v, want only the address it was found on", p.Addresses)
 			}
 		}
+	}
+}
+
+// The four buckets must always sum to scanned: without that, "everything
+// refused" stays true over a set of ports that was never tried.
+func TestScanCountersSumToWhatWasAttempted(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("cannot listen on loopback:", err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	openPort := ln.Addr().(*net.TCPAddr).Port
+
+	s := &Scanner{opts: Options{
+		Concurrency: 4,
+		Rate:        1000,
+		Timeout:     2 * time.Second,
+		Logger:      discardLogger(),
+	}}
+	// The listening port plus four that refuse instantly.
+	spec := portSpec{List: strconv.Itoa(openPort) + ",1,2,3,4"}
+	got, err := s.scanConnect(context.Background(), []string{"127.0.0.1"}, spec, ratelimit.New(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tally := got.tally["127.0.0.1"]
+	if tally == nil {
+		t.Fatal("no counters recorded for a probed address")
+	}
+	if sum := tally.Open + tally.Refused + tally.Filtered + tally.Unknown; sum != tally.Scanned {
+		t.Errorf("buckets sum to %d, scanned is %d (%+v)", sum, tally.Scanned, tally)
+	}
+	if tally.Scanned != 5 {
+		t.Errorf("scanned = %d, want the five ports attempted", tally.Scanned)
+	}
+	if tally.Open != 1 {
+		t.Errorf("open = %d, want the one listening port", tally.Open)
+	}
+}
+
+// A host narrowed to the web ports counts those, not the full selection.
+func TestScanCountersReflectTheNarrowedSweep(t *testing.T) {
+	n := newScanner(t, true, func(_ context.Context, addresses []string, ports portSpec, _ *ratelimit.Limiter) (scanResult, error) {
+		list, _ := (&Scanner{opts: Options{Logger: discardLogger()}}).expand(ports)
+		out := scanResult{open: map[string][]int{}, tally: map[string]*report.Scan{}}
+		for _, a := range addresses {
+			out.tally[a] = &report.Scan{Scanned: len(list), Refused: len(list)}
+		}
+		return out, nil
+	})
+	n.cdn = nil // no CDN data: exercise the plain path
+	n.opts.SkipCDN = true
+
+	hosts := []report.Host{{Host: "a.example.com", Status: report.StatusLive, Addresses: []string{"1.2.3.4"}}}
+	res, err := n.Scan(context.Background(), hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := res.Hosts[0].Scan
+	if sc == nil {
+		t.Fatal("a probed host carries no counters")
+	}
+	if sc.Scanned != sc.Refused || sc.Scanned == 0 {
+		t.Errorf("scan = %+v, want the attempted count", sc)
+	}
+}
+
+// A zeroed object would read as a sweep that tried and found nothing.
+func TestScanIsAbsentWhenNothingWasProbed(t *testing.T) {
+	n := newScanner(t, true, func(context.Context, []string, portSpec, *ratelimit.Limiter) (scanResult, error) {
+		return scanResult{}, nil
+	})
+	res, err := n.Scan(context.Background(), []report.Host{
+		{Host: "dead.example.com", Status: report.StatusDead},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Hosts[0].Scan != nil {
+		t.Errorf("scan = %+v, want it absent on a host that was never probed", res.Hosts[0].Scan)
 	}
 }

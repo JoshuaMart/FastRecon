@@ -77,7 +77,8 @@ fastrecon --targets api.example.com --stages full          # single host, no sou
 fastrecon --targets-url https://internal/hosts --targets-header "Authorization: Bearer $T"
 ```
 
-A list replaces enumeration, it does not skip the stage — exclusions still apply. `-d` becomes
+The endpoint returns `text/plain`, one host per line; blank lines and `#` comments are
+ignored. A list replaces enumeration, it does not skip the stage — exclusions still apply. `-d` becomes
 optional and only labels the report. The report says which input was used in `run.input`, and
 a malformed or over-large list **fails the run** rather than scanning a shortened one.
 
@@ -149,6 +150,9 @@ it:
 - **`scan_limited` marks a narrowed sweep.** "Only 80 and 443 are open" is
   indistinguishable from a genuinely minimal host unless the report says the
   scan was narrowed on purpose.
+- **Each host says what its sweep attempted**, in `scan`: `scanned` plus `open`, `refused`,
+  `filtered` and `unknown`, which sum to it. An empty port list otherwise means both "nothing
+  listens" and "nothing was tried". The field is absent when the scan did not run.
 - **A truncated run is still a valid report**, flagged by `completed` and
   `truncated_by_timeout`. Running out of time is data, not an error.
 

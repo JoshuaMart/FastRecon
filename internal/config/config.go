@@ -107,6 +107,9 @@ type Config struct {
 	// Warnings collected while resolving, surfaced in the report so a typo in
 	// a config file is visible rather than silently ignored.
 	Warnings []string
+	// Degraded carries machine-readable codes for conditions settled before
+	// the run starts, alongside Warnings.
+	Degraded []string
 }
 
 // RequiredSources is the default source selection: the sources a run is
@@ -145,6 +148,7 @@ func (c *Config) Clone() *Config {
 	out.ProbeHeaders = slices.Clone(c.ProbeHeaders)
 	out.WebhookHeaders = slices.Clone(c.WebhookHeaders)
 	out.Warnings = slices.Clone(c.Warnings)
+	out.Degraded = slices.Clone(c.Degraded)
 	return &out
 }
 

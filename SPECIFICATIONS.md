@@ -224,6 +224,10 @@ Decisions:
   rejected, since ports are a run-level setting.
 - **Wildcard detection derives its parents from the list alone.** A wildcard floods a
   verification pass just as readily as an enumeration.
+- **The endpoint returns `text/plain`, one host per line, LF.** Blank lines and `#` comments
+  are ignored, so a generator may emit them or not. The content type is not checked: a server
+  sending `application/octet-stream` for a text file is not a reason to refuse the list. A
+  host carrying a scheme, a path or a port is an error, not something to strip.
 - **An over-large list is an error, never a truncation**, and so is a malformed entry. Both
   would turn a host that was never queried into a host that did not answer — the exact false
   death the mode exists to prevent. `--resolvers-url` truncates because a short resolver list
@@ -517,6 +521,18 @@ is executed.
   than the truncated report the budget design exists to guarantee.
 - **Only live hosts are scanned.** A dead host has no address to connect to, and a wildcard
   artifact is not a host — scanning either spends the budget proving something already known.
+- **Each host records what its sweep attempted**, in `scan`: `scanned` and the four buckets
+  `open`, `refused`, `filtered`, `unknown`, which always sum to it. Without them a report says
+  the same thing for opposite findings — a host with nothing listening and a host that was
+  never probed both show an empty port list, as do a host that closed everything and one
+  behind a firewall that started dropping.
+  - `scanned` counts what was **attempted**, so a host narrowed to the web ports by
+    `scan_limited` counts those, not the full selection.
+  - `unknown` is a probe that failed on a local limit, file descriptors mostly. It says
+    nothing about the target, so folding it into `refused` or `filtered` would make
+    "everything refused" true over ports that were never tried.
+  - `scan` is **absent** when the stage did not run. A zeroed object reads as a sweep that
+    tried and found nothing, which is a different claim.
 - Scanning targets resolved addresses, deduplicated: several subdomains pointing at the same
   address are scanned once and the result is mapped back onto every host sharing it. Ports
   found across a host's several addresses are merged and deduplicated.
@@ -779,6 +795,19 @@ time, and must not retry one somebody stopped on purpose.
 A host carries the status of the furthest stage that reached it. In an `enum` scope nothing is
 resolved, so every surviving host is `discovered`: the enumeration result is data in its own
 right and must appear in the report, not merely be counted in `stats`.
+
+### 13.2.1 Degraded conditions
+
+`run.degraded` carries machine-readable codes for conditions that narrowed a run.
+
+It runs **parallel to `warnings`**, which stays prose for a human. Matching on prose works
+until the wording changes and then stops silently — the failure mode this field exists to
+remove. Neither replaces the other.
+
+| Code | Condition |
+|---|---|
+| `resolvers_unvalidated` | the health budget ran out, so part of the pool was used unchecked |
+| `wildcard_zones_capped` | more zones held hosts than the run could probe for a wildcard |
 
 ### 13.3 Exit codes
 

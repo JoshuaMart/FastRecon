@@ -161,7 +161,7 @@ func TestBuildStagesRejectsUnusableExclusions(t *testing.T) {
 func TestResolverPoolIsCached(t *testing.T) {
 	a := newApp(t, baseConfig(stage.ScopeResolve))
 
-	first, _, err := a.resolverPool(context.Background())
+	first, _, _, err := a.resolverPool(context.Background())
 	if err != nil {
 		t.Fatalf("resolverPool: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestResolverPoolIsCached(t *testing.T) {
 
 	// Mutating the cached value is how a second load makes itself visible.
 	a.pool[0] = "sentinel"
-	second, _, err := a.resolverPool(context.Background())
+	second, _, _, err := a.resolverPool(context.Background())
 	if err != nil {
 		t.Fatalf("resolverPool: %v", err)
 	}

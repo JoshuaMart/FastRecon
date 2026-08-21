@@ -11,7 +11,8 @@ import (
 )
 
 // SchemaVersion identifies the report contract.
-const SchemaVersion = "1.0"
+// Minor bumps are additive: fields appear, none are removed or repurposed.
+const SchemaVersion = "1.1"
 
 // Host status values.
 const (
@@ -53,6 +54,16 @@ type Report struct {
 	Warnings      []string   `json:"warnings,omitempty"`
 }
 
+// Degraded codes. Machine-readable twins of the prose in Warnings.
+const (
+	// DegradedResolversUnvalidated: the health budget ran out, so part of the
+	// pool was used without being checked.
+	DegradedResolversUnvalidated = "resolvers_unvalidated"
+	// DegradedWildcardZonesCapped: more zones held hosts than the run could
+	// probe for a wildcard record.
+	DegradedWildcardZonesCapped = "wildcard_zones_capped"
+)
+
 // Input tells what stage 1 was fed.
 const (
 	InputDomain  = "domain"
@@ -78,6 +89,10 @@ type Run struct {
 	TruncatedByTimeout bool   `json:"truncated_by_timeout"`
 	Version            string `json:"version"`
 	Environment        string `json:"environment"`
+	// Degraded lists machine-readable codes for conditions that narrowed the
+	// run. It runs parallel to Warnings, which is prose for a human: matching
+	// on prose stops working the day the wording changes.
+	Degraded []string `json:"degraded,omitempty"`
 }
 
 // Source records what one enumeration source contributed and how it went. A
@@ -118,7 +133,11 @@ type Host struct {
 	// two runs of the same perimeter compare equal. Absent in targets mode.
 	Sources []string `json:"sources,omitempty"`
 	CDN     []CDN    `json:"cdn,omitempty"`
-	Ports   []Port   `json:"ports,omitempty"`
+	// Scan accounts for what the port sweep attempted on this host. Absent
+	// when the stage did not run: a zeroed object would read as a sweep that
+	// tried and found nothing, which is a different claim.
+	Scan  *Scan  `json:"scan,omitempty"`
+	Ports []Port `json:"ports,omitempty"`
 }
 
 // CDN records that some of a host's addresses sit behind a CDN, WAF or cloud
@@ -135,6 +154,24 @@ type CDN struct {
 	// ScanLimited marks a port list restricted to the standard web ports
 	// because of this provider.
 	ScanLimited bool `json:"scan_limited"`
+}
+
+// Scan is the per-host outcome of the port sweep.
+//
+// Without it, a host with nothing listening and a host that was never probed
+// produce the same document — as do a host that closed everything and one
+// behind a firewall that started dropping. Open, Refused, Filtered and Unknown
+// always sum to Scanned.
+type Scan struct {
+	// Scanned is what was attempted, so a host narrowed to the web ports by
+	// scan_limited counts those, not the full selection.
+	Scanned  int `json:"scanned"`
+	Open     int `json:"open"`
+	Refused  int `json:"refused"`
+	Filtered int `json:"filtered"`
+	// Unknown is a probe that failed on a local limit. It says nothing about
+	// the target, so it is neither of the two above.
+	Unknown int `json:"unknown"`
 }
 
 // Port is an open port on a host, with the HTTP service behind it if any.

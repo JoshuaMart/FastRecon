@@ -42,6 +42,7 @@ type App struct {
 	poolMu       sync.Mutex
 	pool         []string
 	poolWarnings []string
+	poolDegraded []string
 
 	// Engine cache. Two of the stage engines carry a large embedded dataset —
 	// the CDN address ranges and the technology fingerprints — and building
@@ -177,11 +178,12 @@ func (a *App) rest(ctx context.Context, cfg *config.Config, enumerator pipeline.
 
 	// Lazy construction; enumeration-only runs skip unnecessary sockets.
 	if cfg.Scope.Includes(stage.Resolve) {
-		resolvers, warnings, err := a.resolverPool(ctx)
+		resolvers, warnings, degraded, err := a.resolverPool(ctx)
 		if err != nil {
 			return pipeline.Stages{}, err
 		}
 		cfg.Warnings = append(cfg.Warnings, warnings...)
+		cfg.Degraded = append(cfg.Degraded, degraded...)
 
 		resolver, err := resolve.New(resolve.Options{
 			Domain:         cfg.Domain,
@@ -283,12 +285,12 @@ func (a *App) httpProber() (*probe.HTTPX, error) {
 }
 
 // resolverPool loads resolver list once, health-checks and caches it.
-func (a *App) resolverPool(ctx context.Context) (resolvers, warnings []string, err error) {
+func (a *App) resolverPool(ctx context.Context) (resolvers, warnings, degraded []string, err error) {
 	a.poolMu.Lock()
 	defer a.poolMu.Unlock()
 
 	if a.pool != nil {
-		return a.pool, a.poolWarnings, nil
+		return a.pool, a.poolWarnings, a.poolDegraded, nil
 	}
 
 	resolvers, err = resolve.LoadResolvers(ctx, resolve.LoadOptions{
@@ -300,9 +302,9 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings []string, e
 	if err != nil {
 		// Network fetch failures are transient (not configuration errors).
 		if a.cfg.ResolversURL != "" {
-			return nil, nil, fmt.Errorf("%w: %w", ErrRuntime, err)
+			return nil, nil, nil, fmt.Errorf("%w: %w", ErrRuntime, err)
 		}
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	a.log.Info("resolvers loaded", "count", len(resolvers))
 
@@ -330,11 +332,12 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings []string, e
 			}
 			if health.Unchecked > 0 {
 				warnings = append(warnings, fmt.Sprintf("%d of %d resolvers were kept unchecked: the health budget ran out", health.Unchecked, len(resolvers)))
+				degraded = append(degraded, report.DegradedResolversUnvalidated)
 			}
 			resolvers = health.Good
 		}
 	}
 
-	a.pool, a.poolWarnings = resolvers, warnings
-	return resolvers, warnings, nil
+	a.pool, a.poolWarnings, a.poolDegraded = resolvers, warnings, degraded
+	return resolvers, warnings, degraded, nil
 }

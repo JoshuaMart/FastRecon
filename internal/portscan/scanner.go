@@ -50,7 +50,7 @@ type Scanner struct {
 	ports portSpec
 	cdn   *cdncheck.Client
 	// scan allows testing planning/batching/mapping without network access.
-	scan func(ctx context.Context, addresses []string, ports portSpec, limiter *ratelimit.Limiter) (map[string][]int, error)
+	scan func(ctx context.Context, addresses []string, ports portSpec, limiter *ratelimit.Limiter) (scanResult, error)
 }
 
 // New validates the options and prepares the scanner.
@@ -126,6 +126,7 @@ func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortS
 	)
 
 	open := map[string][]int{}
+	tally := map[string]*report.Scan{}
 	var truncated bool
 
 	if len(plain) > 0 {
@@ -133,7 +134,8 @@ func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortS
 		if err != nil {
 			return out, err
 		}
-		merge(open, found)
+		merge(open, found.open)
+		mergeTally(tally, found.tally)
 	}
 	if len(behindEdge) > 0 {
 		// CDN restricted pass: edge serves thousands of customers, full port list describes provider, not target.
@@ -141,14 +143,15 @@ func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortS
 		if err != nil {
 			return out, err
 		}
-		merge(open, found)
+		merge(open, found.open)
+		mergeTally(tally, found.tally)
 	}
 	if ctx.Err() != nil {
 		truncated = true
 		out.Warnings = append(out.Warnings, "port scan cut short by its deadline, open ports may be missing")
 	}
 
-	out.Hosts = s.attach(hosts, byAddress, edges, open)
+	out.Hosts = s.attach(hosts, byAddress, edges, open, tally)
 	out.Truncated = truncated
 	if len(edges) > 0 && s.opts.SkipCDN {
 		out.Warnings = append(out.Warnings, fmt.Sprintf("%d address(es) behind a CDN or WAF were scanned for ports %s only", len(behindEdge), joinPorts(cdnPorts)))
@@ -157,7 +160,7 @@ func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortS
 }
 
 // attach maps per-address results back to all hosts resolving to each address + CDN flags.
-func (s *Scanner) attach(hosts []report.Host, byAddress map[string][]int, edges map[string]edge, open map[string][]int) []report.Host {
+func (s *Scanner) attach(hosts []report.Host, byAddress map[string][]int, edges map[string]edge, open map[string][]int, tally map[string]*report.Scan) []report.Host {
 	out := make([]report.Host, len(hosts))
 	copy(out, hosts)
 
@@ -208,6 +211,8 @@ func (s *Scanner) attach(hosts []report.Host, byAddress map[string][]int, edges 
 			out[i].Ports = nil
 		}
 		out[i].CDN = cdnEntries(addrs, edges, limited)
+		// Summed over the host's addresses: what this host was probed for.
+		out[i].Scan = sumTally(addrs, tally)
 	}
 	return out
 }
@@ -239,6 +244,43 @@ func splitByEdge(addresses []string, edges map[string]edge, skipCDN bool) (plain
 		plain = append(plain, addr)
 	}
 	return plain, behindEdge
+}
+
+// mergeTally folds one pass's counters into the run's.
+func mergeTally(dst, src map[string]*report.Scan) {
+	for addr, t := range src {
+		d := dst[addr]
+		if d == nil {
+			d = &report.Scan{}
+			dst[addr] = d
+		}
+		d.Scanned += t.Scanned
+		d.Open += t.Open
+		d.Refused += t.Refused
+		d.Filtered += t.Filtered
+		d.Unknown += t.Unknown
+	}
+}
+
+// sumTally totals a host's addresses, returning nil when none was probed so
+// the field stays absent rather than reading as an empty sweep.
+func sumTally(addrs []string, tally map[string]*report.Scan) *report.Scan {
+	var out *report.Scan
+	for _, a := range addrs {
+		t := tally[a]
+		if t == nil {
+			continue
+		}
+		if out == nil {
+			out = &report.Scan{}
+		}
+		out.Scanned += t.Scanned
+		out.Open += t.Open
+		out.Refused += t.Refused
+		out.Filtered += t.Filtered
+		out.Unknown += t.Unknown
+	}
+	return out
 }
 
 func merge(dst, src map[string][]int) {

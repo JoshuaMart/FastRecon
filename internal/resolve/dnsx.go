@@ -101,6 +101,7 @@ func (r *DNSX) Resolve(ctx context.Context, hosts []string) (pipeline.Resolution
 		out.Warnings = append(out.Warnings, fmt.Sprintf("wildcard dns on %s: matching hosts are reported as wildcard, not live", strings.Join(parents, ", ")))
 	}
 	if wc.unprobed > 0 {
+		out.Degraded = append(out.Degraded, report.DegradedWildcardZonesCapped)
 		out.Warnings = append(out.Warnings, fmt.Sprintf("%d zone(s) were not checked for a wildcard record: the run covers the %d that hold the most hosts", wc.unprobed, maxWildcardParents))
 	}
 

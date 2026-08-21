@@ -20,7 +20,8 @@ import (
 
 // Partial flags non-fatal issues (stage incompleteness must reach the report).
 type Partial struct {
-	Warnings  []string // non-fatal problems
+	Warnings  []string // non-fatal problems, as prose
+	Degraded  []string // the same conditions, as machine-readable codes
 	Truncated bool     // stage cut short by deadline
 }
 
@@ -136,6 +137,7 @@ func (p *Pipeline) Run(ctx context.Context) (*report.Report, error) {
 	for _, w := range cfg.Warnings {
 		rep.Warnf("%s", w)
 	}
+	rep.Run.Degraded = append(rep.Run.Degraded, cfg.Degraded...)
 
 	// Reserve deadline portion for report building/delivery (prevents process kill on tight budget).
 	usable := time.Duration(float64(cfg.Timeout) * (1 - cfg.OutputMargin))
@@ -308,6 +310,7 @@ func (p *Pipeline) applyPartial(ctx context.Context, rep *report.Report, st stag
 	for _, w := range part.Warnings {
 		rep.Warnf("%s", w)
 	}
+	rep.Run.Degraded = append(rep.Run.Degraded, part.Degraded...)
 	if !part.Truncated {
 		return
 	}
