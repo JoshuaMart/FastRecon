@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"slices"
@@ -276,12 +277,55 @@ func TestParentsOf(t *testing.T) {
 }
 
 func TestCandidateParentsStaysInScope(t *testing.T) {
-	got := candidateParents([]string{"a.dev.example.com", "www.example.com", "evil.other.net"}, "example.com")
+	got, unprobed := candidateParents([]string{"a.dev.example.com", "www.example.com", "evil.other.net"}, "example.com")
+	if unprobed != 0 {
+		t.Errorf("candidateParents dropped %d zones, want 0: the cap must not bite on a small list", unprobed)
+	}
 	slices.Sort(got)
 	want := []string{"dev.example.com", "example.com"}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("candidateParents = %v, want %v: out-of-scope parents must not be probed", got, want)
+	}
+}
+
+func TestCandidateParentsProbesRootFirst(t *testing.T) {
+	got, _ := candidateParents([]string{"a.dev.example.com"}, "example.com")
+	if len(got) == 0 || got[0] != "example.com" {
+		t.Fatalf("candidateParents = %v, want the root first: a wildcard there voids the whole run", got)
+	}
+}
+
+// The cap keeps the zones holding the most hosts, and says how many it left
+// out. A run that silently probed 500 of 3000 zones would report a narrowed
+// wildcard check as an exhaustive one.
+func TestCandidateParentsCapsByCoverage(t *testing.T) {
+	var hosts []string
+	for i := range 600 {
+		// zone-0 gets three hosts, every other zone gets one, so the ranking
+		// is unambiguous and the tie-break is exercised by the rest.
+		zone := fmt.Sprintf("z%03d.example.com", i)
+		hosts = append(hosts, "a."+zone)
+		if i == 0 {
+			hosts = append(hosts, "b."+zone, "c."+zone)
+		}
+	}
+
+	got, unprobed := candidateParents(hosts, "example.com")
+	if len(got) != maxWildcardParents {
+		t.Errorf("candidateParents returned %d zones, want the cap of %d", len(got), maxWildcardParents)
+	}
+	if want := 600 - (maxWildcardParents - 1); unprobed != want {
+		t.Errorf("unprobed = %d, want %d", unprobed, want)
+	}
+	if got[0] != "example.com" {
+		t.Errorf("got[0] = %q, want the root", got[0])
+	}
+	if got[1] != "z000.example.com" {
+		t.Errorf("got[1] = %q, want the most-covering zone z000.example.com", got[1])
+	}
+	if slices.Contains(got, "z599.example.com") {
+		t.Error("the cap kept a least-covering zone and must have dropped it")
 	}
 }
 

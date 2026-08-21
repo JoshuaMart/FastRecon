@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -20,12 +20,12 @@ import (
 
 // Options configures the resolver.
 type Options struct {
-	Domain         string        // run root (always probed for wildcards)
+	Domain         string // run root (always probed for wildcards)
 	Resolvers      []string
 	Concurrency    int
 	Retries        int
 	Timeout        time.Duration
-	WildcardProbes int            // random names per domain to detect wildcard records
+	WildcardProbes int // random names per domain to detect wildcard records
 	Logger         *slog.Logger
 }
 
@@ -99,44 +99,24 @@ func (r *DNSX) Resolve(ctx context.Context, hosts []string) (pipeline.Resolution
 		for p := range wc.byParent {
 			parents = append(parents, p)
 		}
+		sort.Strings(parents)
 		out.Warnings = append(out.Warnings, fmt.Sprintf("wildcard dns on %s: matching hosts are reported as wildcard, not live", strings.Join(parents, ", ")))
 	}
-
-	results := make([]report.Host, len(hosts))
-	var (
-		wg        sync.WaitGroup
-		sem       = make(chan struct{}, r.opts.Concurrency)
-		mu        sync.Mutex
-		unchecked int
-	)
-
-	for i, host := range hosts {
-		wg.Add(1)
-		go func(i int, host string) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-			case <-ctx.Done():
-				// Out of time before this host was even started: report it as
-				// discovered but unresolved rather than inventing a verdict.
-				results[i] = report.Host{Host: host, Status: report.StatusDiscovered}
-				mu.Lock()
-				unchecked++
-				mu.Unlock()
-				return
-			}
-			if ctx.Err() != nil {
-				results[i] = report.Host{Host: host, Status: report.StatusDiscovered}
-				mu.Lock()
-				unchecked++
-				mu.Unlock()
-				return
-			}
-			results[i] = r.resolveOne(host, wc)
-		}(i, host)
+	if wc.unprobed > 0 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("%d zone(s) were not checked for a wildcard record: the run covers the %d that hold the most hosts", wc.unprobed, maxWildcardParents))
 	}
-	wg.Wait()
+
+	// Pre-filled with the verdict a host keeps when the stage runs out of time
+	// before reaching it: discovered, but not resolved. Inventing "dead" for a
+	// host that was never queried would be a finding the run did not make.
+	results := make([]report.Host, len(hosts))
+	for i, host := range hosts {
+		results[i] = report.Host{Host: host, Status: report.StatusDiscovered}
+	}
+
+	unchecked := workers(ctx, len(hosts), r.opts.Concurrency, func(i int) {
+		results[i] = r.resolveOne(hosts[i], wc)
+	})
 
 	out.Hosts = results
 	if unchecked > 0 {
