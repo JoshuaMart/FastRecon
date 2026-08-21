@@ -42,7 +42,9 @@ func (b *Budget) Expired() bool { return b.Left() <= 0 }
 // Deadline returns the run deadline.
 func (b *Budget) Deadline() time.Time { return b.deadline }
 
-// Take allocates s's share of remaining time (zero-weight stages get all remaining time).
+// Take allocates s's share of the remaining time and marks it, and every
+// stage before it, as consumed. Zero-weight and already-consumed stages get
+// all the time that is left.
 func (b *Budget) Take(s stage.Stage) time.Duration {
 	left := b.Left()
 	total := 0

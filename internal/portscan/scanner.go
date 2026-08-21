@@ -90,7 +90,9 @@ func (s *Scanner) Name() string { return "connect" }
 func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortScan, error) {
 	out := pipeline.PortScan{Hosts: hosts}
 
-	// Limiter on run, not scanner (reuse would deadlock); shared across both passes so --scan-rate describes total.
+	// Limiter on the run, not the scanner: a stopped limiter's Wait returns
+	// immediately, so a reused instance would lose its rate limit from the
+	// second run on. Shared across both passes so --scan-rate describes total.
 	limiter := ratelimit.New(s.opts.Rate)
 	defer limiter.Stop()
 
@@ -217,7 +219,7 @@ func indexAddresses(hosts []report.Host) map[string][]int {
 	return out
 }
 
-// splitByEdge separates full port sweep addresses from web-ports-only CDN addresses.
+// splitByEdge separates full port sweep addresses from CDN addresses, which get cdnPorts only.
 func splitByEdge(addresses []string, edges map[string]edge, skipCDN bool) (plain, behindEdge []string) {
 	for _, addr := range addresses {
 		if _, behind := edges[addr]; behind && skipCDN {

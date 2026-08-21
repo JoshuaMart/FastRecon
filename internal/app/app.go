@@ -225,10 +225,10 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings []string, e
 		// These reach the report, not just the log: a resolution done through
 		// a pool that lost half its members is a result worth qualifying.
 		if len(health.Dropped) > 0 {
-			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers dropped by health check", len(health.Dropped), len(resolvers)))
+			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers dropped by the health check", len(health.Dropped), len(resolvers)))
 		}
 		if health.Unchecked > 0 {
-			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers unchecked (health budget exhausted)", health.Unchecked, len(resolvers)))
+			warnings = append(warnings, fmt.Sprintf("%d of %d resolvers were kept unchecked: the health budget ran out", health.Unchecked, len(resolvers)))
 		}
 		resolvers = health.Good
 	}

@@ -30,8 +30,8 @@ import (
 const (
 	exitOK         = 0 // run completed, report emitted
 	exitUsage      = 1 // invalid configuration
-	exitIncomplete = 2 // run did not finish its scope
-	exitSinkFailed = 3 // delivery failed
+	exitIncomplete = 2 // run did not finish its scope, report emitted
+	exitSinkFailed = 3 // delivery failed, report produced
 	exitFatal      = 4 // no report produced
 )
 

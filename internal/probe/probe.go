@@ -44,7 +44,7 @@ type Options struct {
 type HTTPX struct {
 	opts   Options
 	client *httpx.HTTPX
-	direct *httpx.HTTPX            // no redirects (fallback when target unreachable)
+	direct *httpx.HTTPX // no redirects (fallback when a later hop breaks the chain); aliases client when redirects are off
 	tech   *wappalyzer.Wappalyze
 	probe  func(ctx context.Context, host string, port int) *report.HTTP // testable entry point
 }
