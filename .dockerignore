@@ -16,3 +16,4 @@ bin/
 results/
 *.md
 coverage.out
+docs/
