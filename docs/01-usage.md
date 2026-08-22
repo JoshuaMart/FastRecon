@@ -66,6 +66,10 @@ fastrecon --targets-url https://internal/hosts --targets-header "Authorization: 
 
 - The endpoint returns `text/plain`, one host per line. Blank lines and `#` comments are
   ignored; a host carrying a scheme, a path or a port is an error, not something to strip.
+- `--targets-url` accepts **`http` and `https`** — an internal list server often has no
+  certificate. Any other scheme is refused. Over plain `http` a `--targets-header` is
+  readable in transit, so the run logs a warning naming the URL (never the header value)
+  rather than leaving that to be discovered.
 - A list **replaces** enumeration, it does not skip the stage — exclusions still apply.
 - `-d/--domain` becomes optional and only labels the report.
 - The root filter does not apply: a verification list legitimately spans several apexes of

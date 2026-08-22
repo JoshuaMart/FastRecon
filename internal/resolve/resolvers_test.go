@@ -1,7 +1,11 @@
 package resolve
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -90,15 +94,36 @@ func TestLoadResolversRejectsAFileOfJunk(t *testing.T) {
 	}
 }
 
-// The list decides where every DNS query goes; fetching it over a channel
-// anyone can rewrite would hand that decision away.
-func TestLoadResolversRefusesPlainHTTP(t *testing.T) {
-	_, err := LoadResolvers(context.Background(), LoadOptions{
-		URL:    "http://example.com/resolvers.txt",
-		Logger: discardLogger(),
+// The list decides where every DNS query goes, so plaintext is allowed but
+// never silent.
+func TestLoadResolversWarnsOverPlainHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("1.1.1.1\n9.9.9.10\n"))
+	}))
+	defer srv.Close()
+
+	var logged bytes.Buffer
+	got, err := LoadResolvers(context.Background(), LoadOptions{
+		URL:    srv.URL,
+		Logger: slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})),
 	})
-	if err == nil || !strings.Contains(err.Error(), "https") {
-		t.Errorf("err = %v, want a refusal naming https", err)
+	if err != nil {
+		t.Fatalf("LoadResolvers over http: %v", err)
+	}
+	if want := []string{"1.1.1.1:53", "9.9.9.10:53"}; !slices.Equal(got, want) {
+		t.Errorf("resolvers = %v, want %v", got, want)
+	}
+	if !strings.Contains(logged.String(), "rewritten in transit") {
+		t.Errorf("logs = %q, want a plaintext warning", logged.String())
+	}
+}
+
+func TestLoadResolversRejectsOtherSchemes(t *testing.T) {
+	for _, raw := range []string{"file:///etc/resolv.conf", "ftp://example.com/r.txt", "resolvers.txt"} {
+		_, err := LoadResolvers(context.Background(), LoadOptions{URL: raw, Logger: discardLogger()})
+		if err == nil || !strings.Contains(err.Error(), "http or https") {
+			t.Errorf("%s: err = %v, want a refusal naming http or https", raw, err)
+		}
 	}
 }
 

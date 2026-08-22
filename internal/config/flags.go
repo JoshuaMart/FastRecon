@@ -47,7 +47,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 	fs.String("provider-config", "", "path to the source credentials file (never baked into the image)")
 	fs.StringSlice("targets", nil, "host to scan instead of enumerating (repeatable); replaces stage 1")
 	fs.String("targets-file", "", "file of hosts, one per line, # for comments")
-	fs.String("targets-url", "", "https URL of a host list, fetched at startup (30s ceiling)")
+	fs.String("targets-url", "", "http(s) URL of a host list, fetched at startup (30s ceiling)")
 	fs.StringArray("targets-header", nil, "header for the targets fetch, as 'Name: value' (repeatable)")
 
 	fs.StringSlice("sources", RequiredSources, "enumeration sources to query (repeatable); see `fastrecon sources`")
@@ -57,7 +57,7 @@ func RegisterFlags(fs *pflag.FlagSet) {
 
 	fs.StringSlice("resolvers", nil, "DNS resolver IP to use (repeatable); empty uses the bundled set")
 	fs.String("resolvers-file", "", "file of resolver IPs, one per line, # for comments")
-	fs.String("resolvers-url", "", "https URL of a resolver list, fetched at startup (30s ceiling); for deployments with no volume to mount")
+	fs.String("resolvers-url", "", "http(s) URL of a resolver list, fetched at startup (30s ceiling); for deployments with no volume to mount")
 	fs.Bool("validate-resolvers", true, "drop resolvers that are unreachable, answer a known name wrongly, or hijack NXDOMAIN")
 	fs.Duration("resolver-health-budget", 30*time.Second, "ceiling on the resolver health check; resolvers not reached in time are kept and counted")
 	fs.Int("resolver-concurrency", 100, "concurrent DNS queries")

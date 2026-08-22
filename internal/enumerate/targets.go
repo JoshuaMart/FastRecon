@@ -103,8 +103,16 @@ func fetchTargetList(ctx context.Context, opts TargetOptions) ([]string, error) 
 	if err != nil {
 		return nil, fmt.Errorf("targets url %q: %w", opts.URL, err)
 	}
-	if u.Scheme != "https" {
-		return nil, fmt.Errorf("targets url %q must use https", opts.URL)
+	switch u.Scheme {
+	case "https":
+	case "http":
+		if len(opts.Headers) > 0 {
+			// A credential over plaintext is readable in transit.
+			opts.Logger.Warn("targets url uses http: the headers are sent in clear text",
+				"url", opts.Redactor.Redact(opts.URL))
+		}
+	default:
+		return nil, fmt.Errorf("targets url %q must use http or https", opts.URL)
 	}
 
 	timeout := opts.Timeout

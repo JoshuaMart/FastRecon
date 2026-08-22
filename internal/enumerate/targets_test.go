@@ -1,7 +1,9 @@
 package enumerate
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,10 +106,53 @@ func TestOversizedListFailsRatherThanTruncating(t *testing.T) {
 	}
 }
 
-func TestTargetsURLMustBeHTTPS(t *testing.T) {
-	_, err := LoadTargets(context.Background(), loadOpts(TargetOptions{URL: "http://example.com/targets.txt"}))
-	if err == nil || !strings.Contains(err.Error(), "https") {
-		t.Errorf("err = %v, want a refusal naming https", err)
+// A list often lives on an internal service with no certificate.
+func TestTargetsURLAcceptsPlainHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("api.example.com\n# comment\n\nwww.other.net\n"))
+	}))
+	defer srv.Close()
+
+	got, err := LoadTargets(context.Background(), loadOpts(TargetOptions{URL: srv.URL}))
+	if err != nil {
+		t.Fatalf("LoadTargets over http: %v", err)
+	}
+	if want := []string{"api.example.com", "www.other.net"}; !slices.Equal(got, want) {
+		t.Errorf("hosts = %v, want %v", got, want)
+	}
+}
+
+// A bearer token over plaintext is readable in transit, which the run says
+// rather than leaving it to be discovered.
+func TestTargetsURLWarnsWhenHeadersGoOverPlainHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("api.example.com\n"))
+	}))
+	defer srv.Close()
+
+	var logged bytes.Buffer
+	opts := TargetOptions{
+		URL:     srv.URL,
+		Headers: []string{"Authorization: Bearer s3cret"},
+		Logger:  slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})),
+	}
+	if _, err := LoadTargets(context.Background(), opts); err != nil {
+		t.Fatalf("LoadTargets: %v", err)
+	}
+	if !strings.Contains(logged.String(), "clear text") {
+		t.Errorf("logs = %q, want a plaintext-header warning", logged.String())
+	}
+	if strings.Contains(logged.String(), "s3cret") {
+		t.Error("the warning leaked the header value it warns about")
+	}
+}
+
+func TestTargetsURLRejectsOtherSchemes(t *testing.T) {
+	for _, raw := range []string{"file:///etc/hosts", "ftp://example.com/targets.txt", "targets.txt"} {
+		_, err := LoadTargets(context.Background(), loadOpts(TargetOptions{URL: raw}))
+		if err == nil || !strings.Contains(err.Error(), "http or https") {
+			t.Errorf("%s: err = %v, want a refusal naming http or https", raw, err)
+		}
 	}
 }
 

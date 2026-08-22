@@ -60,7 +60,7 @@ func LoadResolvers(ctx context.Context, opts LoadOptions) ([]string, error) {
 	}
 
 	if opts.URL != "" {
-		fromURL, err := fetchResolverList(ctx, opts.URL, opts.Timeout)
+		fromURL, err := fetchResolverList(ctx, opts.URL, opts.Timeout, opts.Logger)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -101,15 +101,19 @@ func readResolverFile(path string) ([]string, error) {
 
 // fetchResolverList downloads a resolver list. This exists for the serverless
 // deployments, which have no volume to mount a file from.
-func fetchResolverList(ctx context.Context, raw string, timeout time.Duration) ([]string, error) {
+func fetchResolverList(ctx context.Context, raw string, timeout time.Duration, log *slog.Logger) ([]string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return nil, fmt.Errorf("resolvers url %q: %w", raw, err)
 	}
-	if u.Scheme != "https" {
-		// The list decides where every DNS query goes; fetching it over a
-		// channel anyone can rewrite would hand that decision away.
-		return nil, fmt.Errorf("resolvers url %q must use https", raw)
+	switch u.Scheme {
+	case "https":
+	case "http":
+		// The list decides where every DNS query goes, and plaintext is a
+		// channel anyone on the path can rewrite.
+		log.Warn("resolvers url uses http: the list can be rewritten in transit", "url", raw)
+	default:
+		return nil, fmt.Errorf("resolvers url %q must use http or https", raw)
 	}
 
 	if timeout <= 0 {

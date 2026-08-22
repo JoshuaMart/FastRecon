@@ -87,12 +87,16 @@ Three sources, merged and deduplicated:
 |---|---|
 | `--resolvers` | repeatable, literal IP addresses |
 | `--resolvers-file` | one per line, `#` comments |
-| `--resolvers-url` | fetched at startup over HTTPS, for deployments with no volume to mount |
+| `--resolvers-url` | fetched at startup over `http(s)`, for deployments with no volume to mount |
 
 A resolver given without a port gets `:53`. Entries must be literal IP addresses — a
 resolver given as a hostname would have to be resolved by some other resolver first, a
 dependency this stage must not have. Unparseable entries are counted and sampled in the log
 rather than silently skipped.
+
+`--resolvers-url` accepts `http` and `https`; any other scheme is refused. Over plain
+`http` the list can be rewritten in transit by anyone on the path — and the list decides
+where every DNS query goes — so the run logs a warning rather than failing.
 
 **The default pool is small and deliberate**: Cloudflare, Google and Quad9's *unfiltered*
 endpoints (`9.9.9.10`, `149.112.112.10` — not `9.9.9.9`). Non-filtering matters more than
