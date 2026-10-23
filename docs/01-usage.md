@@ -63,6 +63,8 @@ fastrecon --targets-url https://internal/hosts --targets-header "Authorization: 
   the value), and a redirect that would carry them to another host or down to `http` is
   refused.
 - `run.input` is `targets`, `sources` is empty, and `stats.enumerated` counts the list.
+- `fastrecon serve` takes the same list as `targets` in the request body — see
+  [Deployment](04-deployment.md#fastrecon-serve).
 
 Background: [Why a target list exists](05-design.md#why-a-target-list-exists).
 

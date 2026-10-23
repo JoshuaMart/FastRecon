@@ -166,11 +166,26 @@ curl -X POST localhost:8080/run \
   -d '{"domain":"example.com","stages":"enum"}'
 ```
 
-`POST /run` takes a `domain` and, optionally, `exclude`, `stages`, `ports` and `timeout`;
-anything omitted comes from the environment. A request's `exclude` is **added** to the
-deployment's exclusions, never substituted, so a caller cannot widen the scope. The response
-is the [report](03-output.md#report-shape). `GET /healthz` needs no token, for platform
-probes.
+`POST /run` takes a `domain` or a `targets` list and, optionally, `exclude`, `stages`,
+`ports` and `timeout`; anything omitted comes from the environment. The response is the
+[report](03-output.md#report-shape). `GET /healthz` needs no token, for platform probes.
+
+| Field | Meaning |
+|---|---|
+| `domain` | the root to enumerate; required without `targets`, an optional report label with it |
+| `targets` | bare hosts to scan instead of enumerating — the CLI's [`--targets`](01-usage.md#scanning-a-known-list) |
+| `exclude` | patterns **added** to the deployment's exclusions, never substituted, so a caller cannot widen the scope |
+| `stages` | `enum`, `resolve`, `ports` or `full` |
+| `ports` | port expression, as `--ports` |
+| `timeout` | Go duration, as `--timeout` |
+
+```json
+{"targets": ["api.example.com", "www.example.net"], "stages": "resolve", "timeout": "30m"}
+```
+
+A `targets` list goes through the CLI's loader: a host with a scheme, a path or a port, an
+empty list, or a body over 1 MiB is a `400`, and nothing is scanned. Exclusions still apply
+to it, and a list configured on the deployment never runs in its place.
 
 | Status | Meaning |
 |---|---|
