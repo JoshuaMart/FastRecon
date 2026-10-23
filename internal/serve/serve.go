@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	// maxBodyBytes bounds a request body. The document is a handful of fields;
-	// anything larger is a mistake or an attempt to exhaust the instance.
+	// maxBodyBytes bounds a request body: a handful of fields, so anything
+	// larger is a mistake or an attempt to exhaust the instance.
 	maxBodyBytes = 64 << 10
 	// busyRetryAfter is what a caller is told to wait when a run holds the
 	// instance.
@@ -71,9 +71,8 @@ func New(a Runner, cfg *config.Config, log *slog.Logger) (*Server, error) {
 		return nil, errors.New("serve: --api-token is required; refusing to expose an unauthenticated endpoint")
 	}
 	// This deployment builds no sinks: the report is the response. A webhook
-	// configured here passes validation at startup and then never fires, which
-	// from the outside looks exactly like one that fires and is never
-	// received — so it is called out rather than left to be discovered.
+	// configured here passes validation and never fires, which looks like one
+	// that fires and is never received, so it is called out.
 	if cfg.WebhookURL != "" {
 		log.Warn("webhook-url is ignored in serve mode; the report is returned in the response", "url", cfg.WebhookURL)
 	}
@@ -121,11 +120,11 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 
 // runRequest is what a caller may specify.
 //
-// It says what to scan, never how the deployment is wired. Credentials, the
-// source selection and the webhook destination come from the function's
-// environment: the engine holds credentials in process-global state, and a
-// caller-supplied destination would make the function a request-forwarding
-// gadget onto its own network.
+// It says what to scan, never how the deployment is wired. Credentials, source
+// selection and webhook destination come from the function's environment: the
+// engine holds credentials in process-global state, and a caller-supplied
+// destination would turn the function into a request forwarder onto its own
+// network.
 type runRequest struct {
 	Domain  string   `json:"domain"`
 	Exclude []string `json:"exclude,omitempty"`

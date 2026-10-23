@@ -1,9 +1,7 @@
 // Package app assembles a run from a configuration.
 //
-// It exists so the one-shot CLI and the HTTP handler share one construction
-// path: a request served by `fastrecon serve` must be wired exactly like a
-// command line invocation, or the two would drift and only one of them would
-// be the tested one.
+// The one-shot CLI and the HTTP handler share one construction path so a
+// request served by `fastrecon serve` is wired exactly like a command line run.
 package app
 
 import (
@@ -45,12 +43,10 @@ type App struct {
 	poolWarnings []string
 	poolDegraded []string
 
-	// Engine cache. Two of the stage engines carry a large embedded dataset —
-	// the CDN address ranges and the technology fingerprints — and building
-	// them costs ~130ms and ~110MB of retained heap. Every option they take
-	// is process-level, never per-request, so they are built once and shared.
-	// Rebuilding them per run made a function instance pay that on every
-	// request, which is how a 256MB instance runs out of memory.
+	// Engine cache. The CDN address ranges and technology fingerprints cost
+	// ~130ms and ~110MB of retained heap to build, and their options are
+	// process-level, so they are built once and shared. Rebuilding per run
+	// ran a 256MB function instance out of memory.
 	engineMu sync.Mutex
 	cdn      *cdncheck.Client
 	prober   *probe.HTTPX
@@ -82,10 +78,9 @@ func (a *App) Config() *config.Config { return a.cfg }
 // Run executes one pipeline against runCfg, which may be the process
 // configuration or a per-request copy of it.
 //
-// The run starts here, not when the ladder does: building the stages can fetch
-// a target list and health-check a resolver pool, and that time comes out of
-// the same deadline. Otherwise a run would overshoot its timeout by the setup
-// time and be killed before its report is delivered.
+// The deadline starts here, not when the ladder does: building the stages can
+// fetch a target list and health-check a resolver pool, and without this the
+// run would overshoot its timeout and be killed before delivering its report.
 func (a *App) Run(ctx context.Context, runCfg *config.Config) (*report.Report, error) {
 	started := time.Now()
 	setupCtx, cancel := context.WithDeadline(ctx, pipeline.Deadline(runCfg, started))
@@ -129,12 +124,10 @@ func (a *App) resolveCredentials() map[string]secrets.Credential {
 
 // buildStages wires the stage implementations the scope calls for.
 //
-// Every option is read from cfg, which is the process configuration for a CLI
-// run and a per-request copy of it in serve mode. Reading one from a.cfg
-// instead would work today and silently ignore the override the day that
-// option becomes caller-settable, so the rule is uniform and has no
-// exceptions. The two cached engines below are the deliberate counterpart:
-// they take no run-scoped option at all.
+// Every option is read from cfg (the process configuration, or a per-request
+// copy in serve mode), never a.cfg, which would silently ignore the override
+// once an option becomes caller-settable. The two cached engines below take no
+// run-scoped option at all.
 func (a *App) buildStages(ctx context.Context, cfg *config.Config) (pipeline.Stages, error) {
 	enumerator, err := a.stageOne(ctx, cfg)
 	if err != nil {
@@ -167,8 +160,7 @@ func (a *App) stageOne(ctx context.Context, cfg *config.Config) (pipeline.Enumer
 		Logger:   a.log,
 	})
 	if err != nil {
-		// A list fetched over the network can fail for reasons unrelated to
-		// the configuration being wrong.
+		// A network-fetched list can fail for reasons unrelated to configuration.
 		if cfg.TargetsURL != "" {
 			return nil, fmt.Errorf("%w: %w", ErrRuntime, err)
 		}
@@ -243,8 +235,7 @@ func (a *App) rest(ctx context.Context, cfg *config.Config, enumerator pipeline.
 // cdnRanges returns the shared CDN address ranges, loading them on first use.
 //
 // The dataset is embedded and takes no option, so one instance serves every
-// run. It is only built when a scope actually reaches the port scan, which is
-// what keeps an enumeration-only run from paying for it.
+// run; it is built only when a scope reaches the port scan.
 func (a *App) cdnRanges() *cdncheck.Client {
 	a.engineMu.Lock()
 	defer a.engineMu.Unlock()
@@ -258,15 +249,12 @@ func (a *App) cdnRanges() *cdncheck.Client {
 
 // httpProber returns the shared prober, building it on first use.
 //
-// Every probe option is process-level — a request may choose what to scan,
-// never how the deployment probes — so the prober is built from the process
-// configuration and reused. That reuse is the point: it holds the technology
-// fingerprints and the HTTP clients, and the httpx client has no Close, so a
-// per-run instance leaves its connection pool behind for the garbage
-// collector to find.
-//
-// Reuse is safe because a prober carries no per-run state: Probe builds its
-// own rate limiter and result set on each call.
+// Every probe option is process-level (a request chooses what to scan, never
+// how the deployment probes), so one prober is built from the process
+// configuration and reused. It holds the technology fingerprints and HTTP
+// clients, and the httpx client has no Close, so a per-run instance would leak
+// its connection pool. Reuse is safe: Probe builds its own rate limiter and
+// result set on each call.
 func (a *App) httpProber() (*probe.HTTPX, error) {
 	a.engineMu.Lock()
 	defer a.engineMu.Unlock()
@@ -326,18 +314,16 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings, degraded [
 			Logger:      a.log,
 		})
 		if len(health.Good) == 0 {
-			// Every resolver failing is far more often a local condition — no
-			// egress on port 53, a captive network, a blocked anchor — than a
-			// pool that is genuinely all hostile. Refusing to run turns that
-			// into no report at all, so the run continues on the unvalidated
-			// pool and says so, in the report as well as the log.
+			// All resolvers failing is far more often a local condition (no
+			// port 53 egress, captive network, blocked anchor) than a hostile
+			// pool. Refusing would yield no report, so continue on the
+			// unvalidated pool and say so in the report and the log.
 			a.log.Error("resolver health check dropped every resolver; continuing without validation", "resolvers", len(resolvers))
 			warnings = append(warnings, fmt.Sprintf("all %d resolvers failed the health check and the run continued without validating them: the live/dead split may be wrong", len(resolvers)))
 			degraded = append(degraded, report.DegradedResolversUnvalidated)
 		} else {
-			// These reach the report, not just the log: a resolution done
-			// through a pool that lost half its members is a result worth
-			// qualifying.
+			// These reach the report, not just the log: results from a pool
+			// that lost half its members deserve qualifying.
 			if len(health.Dropped) > 0 {
 				warnings = append(warnings, fmt.Sprintf("%d of %d resolvers dropped by the health check", len(health.Dropped), len(resolvers)))
 			}
@@ -349,9 +335,9 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings, degraded [
 		}
 	}
 
-	// A check cut short by the caller — a canceled request, a run out of time
-	// — says nothing about the pool. This run uses what it got; caching it
-	// would hand every later run an unvalidated pool flagged as degraded.
+	// A check cut short by the caller (canceled, out of time) says nothing
+	// about the pool: use what we got, but don't cache an unvalidated pool
+	// flagged as degraded for later runs.
 	if ctx.Err() != nil {
 		return resolvers, warnings, degraded, nil
 	}

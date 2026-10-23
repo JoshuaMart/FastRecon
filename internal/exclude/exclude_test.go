@@ -76,8 +76,8 @@ func TestFilterRecordsThePatternThatMatched(t *testing.T) {
 	}
 }
 
-// A pattern matching nothing usually means a typo, and a typo in an exclusion
-// means hosts got scanned that should not have been.
+// A pattern matching nothing usually means a typo, which would leave hosts
+// scanned that should have been excluded.
 func TestUnusedPatternsAreReported(t *testing.T) {
 	m, err := New([]string{"*.dev.example.com", "typo.example.com"}, false)
 	if err != nil {

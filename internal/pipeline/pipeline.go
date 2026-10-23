@@ -1,8 +1,7 @@
 // Package pipeline orchestrates the recon stages.
 //
-// The pipeline owns the ladder, the deadline budgeting and the report; the
-// stages themselves are interfaces, so each one can be built, replaced or
-// tested without touching the orchestration.
+// The pipeline owns the ladder, the deadline budgeting and the report; stages
+// are interfaces, so each can be replaced or tested on its own.
 package pipeline
 
 import (

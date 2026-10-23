@@ -10,8 +10,7 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/logging"
 )
 
-// quiet runs fn with stdout discarded. The subcommands under test print for a
-// living, and their output is not what is being asserted.
+// quiet runs fn with stdout discarded; the subcommands print, and that output is not asserted.
 func quiet(t *testing.T, fn func() int) int {
 	t.Helper()
 	saved := os.Stdout
@@ -27,9 +26,8 @@ func quiet(t *testing.T, fn func() int) int {
 	return fn()
 }
 
-// A scheduler keys its retry on the exit status, so these are a contract and
-// not an implementation detail. Every case here must decide before any stage
-// runs: none of them may reach the network.
+// A scheduler keys its retry on the exit status, so these are a contract.
+// Every case must decide before any stage runs, without reaching the network.
 func TestDispatchExitCodes(t *testing.T) {
 	cases := map[string]struct {
 		args []string
@@ -67,9 +65,8 @@ func TestRunSubcommandIsOptional(t *testing.T) {
 	}
 }
 
-// The delivery budget is what keeps a report from dying with the run that
-// produced it: the deadline is reached, the stages stop, and the report still
-// has time to reach its destinations.
+// The delivery budget keeps a report from dying with its run: stages stop at
+// the deadline and the report still has time to be delivered.
 func TestDeliveryContextReservesTheOutputMargin(t *testing.T) {
 	ctx, cancel := deliveryContext(&config.Config{Timeout: 100 * time.Second, OutputMargin: 0.1})
 	defer cancel()

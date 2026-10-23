@@ -292,8 +292,7 @@ func TestExpandPortsAppliesExclusions(t *testing.T) {
 }
 
 func TestFeedIsPortMajor(t *testing.T) {
-	// Address-major order would hammer one host with the whole port list
-	// back to back.
+	// Address-major order would hammer one host with the whole port list.
 	queue := make(chan target)
 	go feed(context.Background(), queue, []string{"1.1.1.1", "2.2.2.2"}, []int{80, 443})
 
@@ -395,9 +394,8 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 }
 
 // The worker count is what --scan-concurrency promises. A goroutine per probe
-// would allocate a stack for every (address, port) pair up front: a full
-// sweep is millions of them, and the process is killed for memory long before
-// the deadline it was budgeted for.
+// would allocate a stack per (address, port) pair: millions on a full sweep,
+// killing the process for memory long before its deadline.
 func TestScanConnectGoroutinesStayBounded(t *testing.T) {
 	const (
 		workers = 8
@@ -444,9 +442,8 @@ func TestScanConnectGoroutinesStayBounded(t *testing.T) {
 	}
 }
 
-// A warm instance serves many requests from one Scanner. Holding the limiter
-// on the scanner and stopping it at the end of a run left every later run
-// unlimited, which is invisible until a target notices.
+// A warm instance serves many requests from one Scanner. A limiter held on
+// the scanner and stopped after a run left every later run unlimited.
 func TestRateLimitStillAppliesOnASecondScan(t *testing.T) {
 	var seen []*ratelimit.Limiter
 	s := newScanner(t, false, func(_ context.Context, _ []string, _ portSpec, l *ratelimit.Limiter) (scanResult, error) {

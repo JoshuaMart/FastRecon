@@ -1,8 +1,7 @@
 // Package exclude removes out-of-scope hosts before any network activity.
 //
 // Exclusions are applied to the enumeration output, so an excluded host is
-// never resolved, scanned or probed — the point is to not touch it at all,
-// not merely to hide it from the report.
+// never resolved, scanned or probed, not merely hidden from the report.
 package exclude
 
 import (
@@ -74,9 +73,7 @@ func New(patterns []string, strictWildcard bool) (*Matcher, error) {
 
 func compile(raw string) (*pattern, error) {
 	if expr, ok := strings.CutPrefix(raw, RegexPrefix); ok {
-		// (?i) up front: host matching is case-insensitive throughout, and a
-		// pattern that behaved differently from the other two forms would be
-		// a trap.
+		// (?i): host matching is case-insensitive in the other two forms too.
 		re, err := regexp.Compile("(?i)" + expr)
 		if err != nil {
 			return nil, fmt.Errorf("exclusion pattern %q: %w", raw, err)

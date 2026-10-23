@@ -16,9 +16,9 @@ const (
 	// FormatJSON is one indented document: the default, and the only format
 	// that carries the whole report.
 	FormatJSON Format = "json"
-	// FormatJSONCompact is the whole document on one line. It exists for log
-	// sinks: an indented report becomes hundreds of log lines that a
-	// collector may reorder or drop, and reassembling it is guesswork.
+	// FormatJSONCompact is the whole document on one line, for log sinks: an
+	// indented report becomes hundreds of log lines a collector may reorder
+	// or drop.
 	FormatJSONCompact Format = "json-compact"
 	// FormatJSONL is one host per line, for scopes too large to hold in
 	// memory downstream. Run metadata is not in the stream — it goes to the

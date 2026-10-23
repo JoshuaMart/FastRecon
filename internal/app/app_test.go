@@ -16,9 +16,8 @@ import (
 	"github.com/JoshuaMart/FastRecon/internal/stage"
 )
 
-// baseConfig is a configuration that builds every stage without touching the
-// network: the default resolvers are the built-in list, and validation is what
-// would otherwise send queries.
+// baseConfig builds every stage without touching the network: the default
+// resolvers are the built-in list, and validation is what would send queries.
 func baseConfig(scope stage.Scope) *config.Config {
 	return &config.Config{
 		Domain:               "example.com",
@@ -67,9 +66,8 @@ func TestNewRequiresConfigAndLogger(t *testing.T) {
 	}
 }
 
-// The engines carrying an embedded dataset are the reason a served request
-// used to cost ~110MB of retained heap and ~130ms before any work started.
-// They must be built once and handed to every run.
+// The engines carrying an embedded dataset (~110MB heap, ~130ms) must be built
+// once and handed to every run.
 func TestExpensiveEnginesAreBuiltOnce(t *testing.T) {
 	a := newApp(t, baseConfig(stage.ScopeFull))
 
@@ -90,8 +88,7 @@ func TestExpensiveEnginesAreBuiltOnce(t *testing.T) {
 	}
 }
 
-// A scope that stops short of a stage must not build that stage's engine —
-// an enumeration-only run has no reason to pay for the fingerprint dataset.
+// A scope that stops short of a stage must not build that stage's engine.
 func TestNarrowScopeBuildsOnlyTheStagesItRuns(t *testing.T) {
 	a := newApp(t, baseConfig(stage.ScopeEnum))
 
@@ -130,9 +127,8 @@ func TestFullScopeBuildsEveryStage(t *testing.T) {
 	}
 }
 
-// Every option must be read from the run configuration, so that a field made
-// caller-settable in serve mode takes effect instead of being silently
-// overridden by the process configuration.
+// Every option must be read from the run configuration, so a field made
+// caller-settable in serve mode is not overridden by the process configuration.
 func TestBuildStagesHonoursTheRunConfiguration(t *testing.T) {
 	a := newApp(t, baseConfig(stage.ScopePorts))
 
@@ -158,8 +154,7 @@ func TestBuildStagesRejectsUnusableExclusions(t *testing.T) {
 	}
 }
 
-// The resolver pool is loaded and health-checked once; a served instance must
-// not redo it on every request.
+// The resolver pool is loaded and health-checked once, not per request.
 func TestResolverPoolIsCached(t *testing.T) {
 	a := newApp(t, baseConfig(stage.ScopeResolve))
 
@@ -221,10 +216,9 @@ func TestAccessorsExposeWhatTheHandlerNeeds(t *testing.T) {
 	}
 }
 
-// The severe branch — every resolver dropped, the run continuing on an
-// unvalidated pool — must carry the same code as the mild one. Without it a
-// pool that is entirely dead reports degraded: [] while producing deaths that
-// are artefacts of the resolvers, not of the targets.
+// The severe branch (every resolver dropped, run continuing on an unvalidated
+// pool) must carry the same code as the mild one; otherwise a dead pool reports
+// degraded: [] while producing deaths that are artefacts of the resolvers.
 func TestUnvalidatedPoolIsFlaggedWhenEveryResolverFails(t *testing.T) {
 	cfg := baseConfig(stage.ScopeResolve)
 	// TEST-NET-1: routable nowhere, so every health probe fails.
@@ -250,9 +244,8 @@ func TestUnvalidatedPoolIsFlaggedWhenEveryResolverFails(t *testing.T) {
 	}
 }
 
-// A health check the caller abandoned says nothing about the pool. Caching
-// its outcome would leave every later run on an unvalidated pool, flagged as
-// degraded, until the process restarts.
+// A health check the caller abandoned says nothing about the pool; caching it
+// would leave every later run on an unvalidated, degraded pool until restart.
 func TestAbandonedHealthCheckIsNotCached(t *testing.T) {
 	cfg := baseConfig(stage.ScopeResolve)
 	cfg.Resolvers = []string{"192.0.2.1", "192.0.2.2"}
@@ -274,9 +267,8 @@ func TestAbandonedHealthCheckIsNotCached(t *testing.T) {
 	}
 }
 
-// Building the stages comes out of the run's deadline: a setup that took
-// longer than the stage budget leaves the ladder nothing, rather than a full
-// budget measured from after the setup.
+// Building the stages comes out of the run's deadline: a setup longer than the
+// stage budget leaves the ladder nothing.
 func TestSetupTimeCountsAgainstTheDeadline(t *testing.T) {
 	cfg := baseConfig(stage.ScopeEnum)
 	cfg.Timeout = time.Second

@@ -189,9 +189,8 @@ func run(args []string) int {
 		if errors.Is(err, app.ErrRuntime) {
 			return exitFatal
 		}
-		// Everything else that stops a run before it starts is a mistake in
-		// the configuration: an unparseable exclusion, an impossible scan
-		// mode, a port list that is not one.
+		// Everything else that stops a run before it starts is a configuration
+		// mistake.
 		return exitUsage
 	}
 

@@ -9,8 +9,8 @@ import (
 const Placeholder = "[REDACTED]"
 
 // queryKeyRE matches a credential carried in a URL query string. Some sources
-// authenticate that way — c99 puts the key in the URL — so an error message
-// quoting the request URL would otherwise leak it verbatim into the report.
+// authenticate that way (c99), so an error quoting the request URL would leak
+// the key into the report.
 var queryKeyRE = regexp.MustCompile(`(?i)([?&](?:key|api_?key|token|access_?key|apitoken)=)[^&\s"']+`)
 
 // Redactor scrubs known credential values, and anything shaped like one, out
@@ -33,9 +33,9 @@ func NewRedactor(creds map[string]Credential) *Redactor {
 
 // Redact returns s with every known credential replaced.
 //
-// The query-string pass runs whether or not any credential value is known: a
-// run whose provider config failed to load has no values to match, and is
-// exactly the run whose source errors are most likely to quote a URL.
+// The query-string pass runs even when no credential value is known: a run
+// whose provider config failed to load has none, and its source errors are the
+// most likely to quote a URL.
 func (r *Redactor) Redact(s string) string {
 	if s == "" {
 		return s
@@ -46,10 +46,8 @@ func (r *Redactor) Redact(s string) string {
 	return queryKeyRE.ReplaceAllString(s, "${1}"+Placeholder)
 }
 
-// RedactBytes scrubs a rendered document. It is the last line of defence
-// before the report leaves the process: everything that reaches the report is
-// meant to be redacted at the point it is created, and this catches whatever
-// was not.
+// RedactBytes scrubs a rendered document: the last line of defence before the
+// report leaves the process, catching whatever was not redacted where created.
 func (r *Redactor) RedactBytes(data []byte) []byte {
 	if len(data) == 0 {
 		return data

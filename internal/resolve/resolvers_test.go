@@ -34,8 +34,7 @@ func TestParseResolver(t *testing.T) {
 		}
 	}
 
-	// A hostname would have to be resolved by some other resolver first,
-	// which is a dependency this stage must not have.
+	// A hostname would need another resolver first.
 	for _, in := range []string{"", "dns.google", "1.1.1.1:0", "1.1.1.1:99999", "not-an-ip", "1.1.1.1:abc"} {
 		if got, err := parseResolver(in); err == nil {
 			t.Errorf("parseResolver(%q) = %q, want an error", in, got)

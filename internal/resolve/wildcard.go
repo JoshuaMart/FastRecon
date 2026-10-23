@@ -39,20 +39,18 @@ func (w *wildcardSet) covers(addresses, cnames []string) bool {
 
 // maxWildcardParents bounds how many zones are probed for a wildcard record.
 //
-// Every zone costs WildcardProbes DNS queries, and they are spent before a
-// single host is resolved. On a target that names in depth —
-// <service>.<env>.<region>.example.com — the distinct zone count runs into the
-// thousands, and the probing alone can consume the stage's whole budget for a
-// result that says nothing about most of the hosts. Zones are ranked by how
-// many hosts they cover, so what the cap drops is what a wildcard record there
-// would have explained the least.
+// Every zone costs WildcardProbes queries, spent before any host is resolved.
+// On a target that names in depth (<service>.<env>.<region>.example.com) the
+// zone count runs into the thousands and probing alone can consume the stage's
+// budget. Zones are ranked by hosts covered, so the cap drops the ones a
+// wildcard record would have explained least.
 const maxWildcardParents = 500
 
 // wildcards maps a parent domain to the answers its wildcard record returns.
 type wildcards struct {
 	byParent map[string]*wildcardSet
-	// unprobed counts the zones the cap left out, so a run says so rather
-	// than reporting a narrowed check as an exhaustive one.
+	// unprobed counts the zones the cap left out, so a narrowed check is not
+	// reported as exhaustive.
 	unprobed int
 }
 
@@ -136,15 +134,14 @@ func (r *DNSX) probeWildcard(ctx context.Context, parent string) *wildcardSet {
 }
 
 // candidateParents lists the domains worth probing for a wildcard record:
-// each host's ancestors, down to and including the root, ranked by how many
-// hosts they cover and capped at maxWildcardParents. It also returns how many
-// zones the cap left out.
+// each host's ancestors, ranked by how many hosts they cover and capped at
+// maxWildcardParents. It also returns how many zones the cap left out.
 //
-// The root is always probed and always first: it is the run's own domain, and
-// a wildcard there is the case that turns a whole enumeration into noise.
+// The root is always probed and always first: a wildcard there turns a whole
+// enumeration into noise.
 func candidateParents(hosts []string, root string) (parents []string, unprobed int) {
-	// With no root — targets mode — every ancestor of the supplied hosts is a
-	// candidate. A wildcard floods a verification pass just as readily.
+	// With no root (targets mode) every ancestor is a candidate; a wildcard
+	// floods a verification pass just as readily.
 	inScope := func(p string) bool {
 		if root == "" {
 			return true
@@ -165,9 +162,8 @@ func candidateParents(hosts []string, root string) (parents []string, unprobed i
 	for p := range covered {
 		ranked = append(ranked, p)
 	}
-	// Most-covering first, name as the tie-break: two runs over the same
-	// enumeration must probe the same zones, or a wildcard would appear and
-	// disappear between runs for no reason a reader could see.
+	// Name as the tie-break: two runs over the same enumeration must probe
+	// the same zones.
 	sort.Slice(ranked, func(i, j int) bool {
 		if covered[ranked[i]] != covered[ranked[j]] {
 			return covered[ranked[i]] > covered[ranked[j]]

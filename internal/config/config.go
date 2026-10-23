@@ -104,8 +104,8 @@ type Config struct {
 	Listen   string
 	APIToken string
 
-	// Warnings collected while resolving, surfaced in the report so a typo in
-	// a config file is visible rather than silently ignored.
+	// Warnings collected while resolving, surfaced in the report so a config
+	// typo is not silently ignored.
 	Warnings []string
 	// Degraded carries machine-readable codes for conditions settled before
 	// the run starts, alongside Warnings.
@@ -133,9 +133,9 @@ const StdoutPath = "-"
 
 // Clone deep-copies the configuration.
 //
-// A served request overlays its own fields onto the process configuration, so
-// the copy has to be independent: sharing a slice would let one request's
-// exclusions leak into the next.
+// A served request overlays its fields onto the process configuration, so the
+// copy must be independent: a shared slice would leak one request's exclusions
+// into the next.
 func (c *Config) Clone() *Config {
 	out := *c
 	out.Exclude = slices.Clone(c.Exclude)

@@ -9,15 +9,12 @@ import (
 // goroutines, and returns how many indexes were never started because ctx
 // ended first.
 //
-// A goroutine per item with a semaphore inside would be shorter, but the item
-// count here is the enumeration output: one goroutine per host means a
-// hundred thousand goroutines parked on a channel before a single query goes
-// out, and their stacks are allocated whether or not the work ever starts.
-// The pool is what the port scan and the HTTP probe already do, and this
-// package is the only one that did not.
+// It is a fixed pool, not a goroutine per item behind a semaphore: the item
+// count is the enumeration output, and a hundred thousand parked goroutines
+// allocate their stacks before a single query goes out.
 //
 // Callers pre-fill their result slice with the "not reached" value, so an
-// index fn never runs for keeps a meaningful entry rather than a zero one.
+// index fn never runs for keeps a meaningful entry.
 func workers(ctx context.Context, n, limit int, fn func(i int)) int {
 	if n <= 0 {
 		return 0
@@ -43,9 +40,8 @@ func workers(ctx context.Context, n, limit int, fn func(i int)) int {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// The queue is drained rather than abandoned: leaving it would
-			// block the feeder, and the count of what was skipped is itself a
-			// result the report carries.
+			// Drain rather than abandon the queue: leaving it would block the
+			// feeder, and the skipped count is reported.
 			for i := range queue {
 				if ctx.Err() != nil {
 					skip()

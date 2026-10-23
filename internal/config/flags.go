@@ -11,8 +11,7 @@ import (
 )
 
 // Flags that take a list come in two kinds, and the flag form must apply the
-// same rule as the environment form — otherwise the same value means two
-// different things depending on how it was supplied.
+// same rule as the environment form.
 //
 //	comma-splitting  sources, exclude-sources, resolvers   (pflag StringSlice)
 //	kept whole       exclude, probe-header, webhook-header (pflag StringArray)
@@ -25,10 +24,8 @@ var newlineOnlyFlags = map[string]bool{
 	"targets-header": true,
 }
 
-// patternFlags hold exclusion patterns, which need a rule of their own: a
-// regexp's repeat count contains a comma, and splitting on it yields two
-// halves that both still compile — so the run would quietly scan hosts the
-// operator excluded. See splitPatterns.
+// patternFlags hold exclusion patterns, which need a rule of their own: see
+// splitPatterns.
 var patternFlags = map[string]bool{"exclude": true}
 
 // RegisterFlags defines the full option surface. Defaults live here and

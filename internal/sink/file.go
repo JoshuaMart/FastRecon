@@ -24,10 +24,9 @@ func (f *File) Name() string { return "file" }
 func (f *File) Path() string { return f.path }
 
 func (f *File) Deliver(_ context.Context, data []byte) error {
-	// A character device or a pipe — /dev/stdout, /dev/null, a fifo — cannot
-	// be replaced by a rename, and there is nothing to make atomic: the write
-	// goes straight through. Treating these as regular files fails with a
-	// permission error that says nothing about the cause.
+	// A character device or a pipe (/dev/stdout, /dev/null, a fifo) cannot be
+	// replaced by a rename, so the write goes straight through. Treating it as
+	// a regular file fails with a misleading permission error.
 	if info, err := os.Stat(f.path); err == nil && !info.Mode().IsRegular() {
 		return f.writeDirect(data)
 	}

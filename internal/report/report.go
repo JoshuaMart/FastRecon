@@ -160,12 +160,10 @@ type CDN struct {
 	ScanLimited bool `json:"scan_limited"`
 }
 
-// Scan is the per-host outcome of the port sweep.
-//
-// Without it, a host with nothing listening and a host that was never probed
-// produce the same document — as do a host that closed everything and one
-// behind a firewall that started dropping. Open, Refused, Filtered and Unknown
-// always sum to Scanned.
+// Scan is the per-host outcome of the port sweep. Without it, a host with
+// nothing listening and a host never probed produce the same document, as do a
+// host that closed everything and one behind a firewall that started dropping.
+// Open, Refused, Filtered and Unknown always sum to Scanned.
 type Scan struct {
 	// Scanned is what was attempted, so a host narrowed to the web ports by
 	// scan_limited counts those, not the full selection.
