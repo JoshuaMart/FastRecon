@@ -9,9 +9,9 @@
 **FastRecon maps what a domain exposes.** Give it a root domain; it returns the hosts that
 answer, the ports they expose and the HTTP services behind them, as one JSON report.
 
-One static binary, no external tools, no root, no state — which is what lets it run from a
-serverless job on a schedule with no machine to maintain. It is deliberately not exhaustive:
-it exists to map a perimeter quickly and keep that map current.
+One static binary, no external tools, no root, no state: it runs as a scheduled serverless
+job with no machine to maintain. It is deliberately not exhaustive — it maps a perimeter
+quickly and keeps that map current.
 
 ## Quick start
 
@@ -24,8 +24,8 @@ docker run --rm ghcr.io/joshuamart/fastrecon:main \
   -d example.com --stages full --ports web --format text
 ```
 
-No API key is needed to start — two of the five default sources work without one. Building
-from source is `make build`, then `./bin/fastrecon -d example.com --format text`.
+No API key is needed to start: `crt`, one of the four default sources, works without one.
+From source: `make build`, then `./bin/fastrecon -d example.com --format text`.
 
 ## The pipeline
 
@@ -37,8 +37,7 @@ from source is `make build`, then `./bin/fastrecon -d example.com --format text`
  [5] HTTP PROBE ─► services with scheme, status, title, tech, TLS
 ```
 
-`--stages` picks how far up the ladder a run goes, and each rung implies the ones below it —
-so a run costs only what you ask of it.
+`--stages` picks how far a run goes; each rung includes the ones below it.
 
 | `--stages` | Runs | Sends to the target |
 |---|---|---|
@@ -69,9 +68,8 @@ hosts
 ```
 
 `--format json` gives the same run as a document, with per-source accounting, TLS
-certificates, detected technologies and redirect chains. Dead hosts, narrowed scans and
-truncated runs are all reported explicitly rather than dropped — see
-[Reading a report](docs/03-output.md#reading-a-report).
+certificates, technologies and redirect chains. Dead hosts, narrowed scans and truncated
+runs are reported, never dropped — see [Reading a report](docs/03-output.md#reading-a-report).
 
 ## Performance
 
@@ -87,9 +85,9 @@ Measured in a Scaleway Serverless Job at 1000 mvCPU / 1024 MB, `--stages full --
 ![CPU consumption](https://github.com/user-attachments/assets/40376952-01d0-4261-824f-75d7104dc767)
 ![RAM consumption](https://github.com/user-attachments/assets/4005cb1c-d381-434f-b100-1c32618fb2b2)
 
-Eight times the hosts for thirteen percent more memory: the cost is dominated by fixed
-allocations, not by target size. The port scan dominates wall time — 289 s of the 384 s
-above. [Sizing a deployment](docs/04-deployment.md#sizing) has the formula.
+Eight times the hosts for 13% more memory: fixed allocations dominate, not target size. The
+port scan takes most of the wall time (289 s of 384 s). [Sizing](docs/04-deployment.md#sizing)
+has the formula.
 
 ## Documentation
 

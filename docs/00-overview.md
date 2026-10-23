@@ -4,8 +4,8 @@ FastRecon takes a root domain, enumerates its subdomains from passive sources, d
 excluded ones, separates live hosts from dead, scans ports and probes them for HTTP
 services. The result is one JSON report.
 
-It is deliberately **not** exhaustive. It exists to map a perimeter quickly and to keep that
-map current on a schedule — not to be the most complete discovery tool available.
+It is deliberately **not** exhaustive: it maps a perimeter quickly and keeps that map
+current on a schedule.
 
 ## The pipeline
 
@@ -31,19 +31,16 @@ input (domain + exclusions)
    report (JSON) ──► stdout | file | webhook
 ```
 
-Each stage consumes the previous one's output, which is why the scope is a **ladder** rather
-than a set: `--stages` takes one value and each rung runs everything below it. See
-[Choosing a scope](01-usage.md#choosing-a-scope) for the table, and
-[Why a ladder and not a set](05-design.md#why-a-ladder-and-not-a-set) for the reasoning.
-
-The report always states which stages ran, so "no open ports found" stays distinguishable
-from "port scanning did not run".
+Each stage consumes the previous one's output, so the scope is a **ladder**: `--stages`
+takes one value and runs everything below it ([table](01-usage.md#choosing-a-scope),
+[reasoning](05-design.md#why-a-ladder-and-not-a-set)). The report states which stages ran,
+so "no open ports" never reads like "the port scan did not run".
 
 ## Where it runs
 
-The same artifact — one container image, one static binary — serves four environments. There
-is no separate "serverless build". The binary exposes two entrypoints: the default one-shot
-CLI run, and a `serve` subcommand that turns the same pipeline into an HTTP handler.
+One container image, one static binary, four environments — there is no separate serverless
+build. The default entrypoint is a one-shot run; `serve` puts the same pipeline behind an
+HTTP handler.
 
 | | Local CLI | Docker (local) | Serverless Job | Serverless Container |
 |---|---|---|---|---|
@@ -60,25 +57,21 @@ CLI run, and a `serve` subcommand that turns the same pipeline into an HTTP hand
 
 ## Constraints
 
-These are what every other decision keeps coming back to:
+Every other decision comes back to these:
 
-- **One static binary**, no runtime dependency on external tools. A target rather than an
-  absolute rule, but the default image stays self-contained — it has already cost one engine
-  choice.
-- **Unprivileged.** No root, no `CAP_NET_RAW`, no raw sockets on the default path. This is
-  what makes a serverless deployment possible at all, and it rules out SYN scanning.
-- **Configurable entirely through environment variables**, since that is all a job
-  definition offers.
-- **No secret in the image.** CI builds it and publishes it publicly.
-- **Stateless.** Every run is self-contained. No database, no cross-run diffing: whatever
-  consumes the report owns that.
+- **One static binary**, no external tools at runtime. It already cost one engine choice
+  ([why not naabu](05-design.md#why-not-naabu)).
+- **Unprivileged**: no root, no `CAP_NET_RAW`, no raw sockets. That is what makes serverless
+  possible, and it rules out SYN scanning.
+- **Configurable through environment variables alone** — all a job definition offers.
+- **No secret in the image**, which CI publishes publicly.
+- **Stateless**: no database, no cross-run diffing. Whatever consumes the report owns that.
 
 ## Deliberately not built
 
-- Active brute-force subdomain enumeration. Enumeration is passive; verification of a known
-  perimeter is done with an [explicit target list](01-usage.md#scanning-a-known-list).
-- Cross-run diffing, alerting or storage. The report is the output; a consumer owns history.
-- SYN scanning on the default path. `--scan-mode=syn` is refused rather than silently
-  downgraded, because a SYN scan the process cannot perform finds no open ports at all —
-  which reads exactly like a host with nothing listening.
+- Brute-force subdomain enumeration. Enumeration is passive; a known perimeter is verified
+  with an [explicit target list](01-usage.md#scanning-a-known-list).
+- Diffing, alerting or storage across runs.
+- SYN scanning. `--scan-mode=syn` is refused rather than downgraded: a SYN scan the process
+  cannot perform finds nothing, which reads like a host with nothing listening.
 - Feeding TLS SANs back into enumeration. They are recorded, not re-enumerated.
