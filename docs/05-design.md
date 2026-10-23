@@ -116,8 +116,8 @@ those integrations is the whole reason the engine is a dependency.
 
 **Engine: `subfaster` as a Go library** (`github.com/melvinsh/subfaster`). A fork of
 ProjectDiscovery's subfinder, so it keeps subfinder's provider-config format while shipping
-fast keyless sources (`submd`, `crt`, `thc`, `rapiddns`, `hackertarget`, `shodanct`,
-`sitedossier`) and the full keyed source set behind its "all sources" mode.
+fast keyless sources (`crt`, `thc`, `scanmalware`, `rapiddns`, `hackertarget`,
+`shodanct`, `sitedossier`) and the full keyed source set behind its "all sources" mode.
 
 Only the library's **passive agent** is used, not its CLI runner. The runner reads a provider
 config from the user's home directory when none is given, and a container run must not depend

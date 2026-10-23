@@ -119,9 +119,8 @@ type Config struct {
 //	chaos           ProjectDiscovery Chaos   key required
 //	securitytrails  SecurityTrails           key required
 //	c99             c99.nl                   key required
-//	submd           sub.md                   key optional
 //	crt             crt.name                 key optional
-var RequiredSources = []string{"chaos", "securitytrails", "c99", "submd", "crt"}
+var RequiredSources = []string{"chaos", "securitytrails", "c99", "crt"}
 
 // Scan modes.
 const (

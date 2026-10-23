@@ -139,17 +139,16 @@ custom User-Agent and headers.
 
 ## Sources
 
-Five sources are supported and enabled by default:
+Four sources are supported and enabled by default:
 
 | Source | Engine name | Key |
 |---|---|---|
 | ProjectDiscovery Chaos | `chaos` | required |
 | SecurityTrails | `securitytrails` | required |
 | c99.nl | `c99` | required |
-| sub.md | `submd` | optional |
 | crt.name | `crt` | optional |
 
-The last two work without a credential, which is what makes a first run return data. The
+The last one works without a credential, which is what makes a first run return data. The
 keyed ones report themselves as `skipped_no_key` rather than being silently dropped — the
 distinction between "asked and refused" and "never asked" is the whole point of the
 per-source accounting.

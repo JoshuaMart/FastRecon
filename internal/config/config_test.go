@@ -107,8 +107,8 @@ func TestRegexExclusionsSurviveEnvSplitting(t *testing.T) {
 // The engine matches source names case-sensitively and calls os.Exit on an
 // empty selection, so names are normalized before they can get there.
 func TestSourceNamesAreNormalized(t *testing.T) {
-	cfg := mustLoad(t, "-d", "example.com", "--sources", "Crt", "--sources", " SUBMD ", "--exclude-sources", "Chaos")
-	if len(cfg.Sources) != 2 || cfg.Sources[0] != "crt" || cfg.Sources[1] != "submd" {
+	cfg := mustLoad(t, "-d", "example.com", "--sources", "Crt", "--sources", " THC ", "--exclude-sources", "Chaos")
+	if len(cfg.Sources) != 2 || cfg.Sources[0] != "crt" || cfg.Sources[1] != "thc" {
 		t.Errorf("sources = %v, want them lowercased and trimmed", cfg.Sources)
 	}
 	if len(cfg.ExcludeSources) != 1 || cfg.ExcludeSources[0] != "chaos" {
@@ -230,22 +230,22 @@ func TestDetectEnvironmentPrefersExplicitLabel(t *testing.T) {
 // translating FASTRECON_SOURCES=a,b from the deployment docs into --sources
 // a,b would otherwise get an error.
 func TestCommaListsAgreeBetweenFlagAndEnvironment(t *testing.T) {
-	fromFlag := mustLoad(t, "-d", "example.com", "--sources", "crt,submd", "--resolvers", "1.1.1.1,8.8.8.8")
-	if len(fromFlag.Sources) != 2 || fromFlag.Sources[1] != "submd" {
+	fromFlag := mustLoad(t, "-d", "example.com", "--sources", "crt,thc", "--resolvers", "1.1.1.1,8.8.8.8")
+	if len(fromFlag.Sources) != 2 || fromFlag.Sources[1] != "thc" {
 		t.Errorf("sources from flag = %v, want them split", fromFlag.Sources)
 	}
 	if len(fromFlag.Resolvers) != 2 {
 		t.Errorf("resolvers from flag = %v, want them split", fromFlag.Resolvers)
 	}
 
-	t.Setenv("FASTRECON_SOURCES", "crt,submd")
+	t.Setenv("FASTRECON_SOURCES", "crt,thc")
 	fromEnv := mustLoad(t, "-d", "example.com")
 	if len(fromEnv.Sources) != len(fromFlag.Sources) {
 		t.Errorf("env %v and flag %v disagree", fromEnv.Sources, fromFlag.Sources)
 	}
 
 	// Repeating the flag must keep working.
-	repeated := mustLoad(t, "-d", "example.com", "--sources", "crt", "--sources", "submd")
+	repeated := mustLoad(t, "-d", "example.com", "--sources", "crt", "--sources", "thc")
 	if len(repeated.Sources) != 2 {
 		t.Errorf("repeated flags = %v, want both kept", repeated.Sources)
 	}

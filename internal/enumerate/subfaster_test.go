@@ -8,6 +8,7 @@ import (
 
 	"github.com/melvinsh/subfaster/v2/pkg/subscraping"
 
+	"github.com/JoshuaMart/FastRecon/internal/config"
 	"github.com/JoshuaMart/FastRecon/internal/report"
 	"github.com/JoshuaMart/FastRecon/internal/secrets"
 )
@@ -76,9 +77,9 @@ func TestRateLimited(t *testing.T) {
 }
 
 func TestEffectiveRemovesExclusions(t *testing.T) {
-	got := effective([]string{"chaos", "CRT", "submd"}, []string{"crt"})
-	if len(got) != 2 || got[0] != "chaos" || got[1] != "submd" {
-		t.Errorf("effective = %v, want chaos and submd", got)
+	got := effective([]string{"chaos", "CRT", "thc"}, []string{"crt"})
+	if len(got) != 2 || got[0] != "chaos" || got[1] != "thc" {
+		t.Errorf("effective = %v, want chaos and thc", got)
 	}
 }
 
@@ -93,7 +94,7 @@ func TestValidateSourcesNamesTheUnknownOnes(t *testing.T) {
 	if strings.Contains(err.Error(), "chaos") {
 		t.Errorf("error %q blames a valid source", err)
 	}
-	if err := validateSources([]string{"chaos", "crt", "submd", "c99", "securitytrails"}); err != nil {
+	if err := validateSources(config.RequiredSources); err != nil {
 		t.Errorf("the required sources must all exist: %v", err)
 	}
 }
@@ -109,20 +110,20 @@ func statuses(t *testing.T, s *Subfaster, stats map[string]subscraping.Statistic
 
 func TestSourceStatusMapping(t *testing.T) {
 	s := &Subfaster{opts: Options{
-		Sources:     []string{"chaos", "crt", "submd", "c99", "securitytrails"},
+		Sources:     []string{"chaos", "crt", "thc", "c99", "securitytrails"},
 		Credentials: map[string]secrets.Credential{"c99": {Source: "c99", Value: "k"}},
 	}}
 
 	stats := map[string]subscraping.Statistics{
 		"crt":            {Results: 30, TimeTaken: 150 * time.Millisecond},
-		"submd":          {Results: 18, Errors: 2},
+		"thc":            {Results: 18, Errors: 2},
 		"chaos":          {Skipped: true},
 		"c99":            {Errors: 1},
 		"securitytrails": {},
 	}
 	errs := map[string][]string{
-		"c99":   {"unexpected status code 429"},
-		"submd": {"one page failed"},
+		"c99": {"unexpected status code 429"},
+		"thc": {"one page failed"},
 	}
 
 	got := statuses(t, s, stats, errs, true)
@@ -131,8 +132,8 @@ func TestSourceStatusMapping(t *testing.T) {
 		t.Errorf("crt = %+v, want ok with 30 results", got["crt"])
 	}
 	// Errors alongside results is a degraded success, not a failure.
-	if got["submd"].Status != report.SourceOK || !got["submd"].Partial {
-		t.Errorf("submd = %+v, want ok and partial", got["submd"])
+	if got["thc"].Status != report.SourceOK || !got["thc"].Partial {
+		t.Errorf("thc = %+v, want ok and partial", got["thc"])
 	}
 	// A keyed source with no credential is skipped for a known reason.
 	if got["chaos"].Status != report.SourceSkippedNoKey {
@@ -209,7 +210,7 @@ func TestAvailableListsTheRequiredSources(t *testing.T) {
 	for _, s := range Available() {
 		byName[s.Name] = s
 	}
-	for _, want := range []string{"chaos", "securitytrails", "c99", "submd", "crt"} {
+	for _, want := range config.RequiredSources {
 		if _, ok := byName[want]; !ok {
 			t.Errorf("source %q is missing from the engine", want)
 		}
@@ -217,12 +218,9 @@ func TestAvailableListsTheRequiredSources(t *testing.T) {
 	if byName["chaos"].Key != "required" {
 		t.Errorf("chaos key requirement = %q, want required", byName["chaos"].Key)
 	}
-	// crt.name and sub.md work without a key but accept one for better
-	// results, which is why an enumeration with no credentials at all still
-	// returns data.
-	for _, name := range []string{"crt", "submd"} {
-		if byName[name].Key != "optional" {
-			t.Errorf("%s key requirement = %q, want optional", name, byName[name].Key)
-		}
+	// crt.name works without a key but accepts one for better results, which
+	// is why an enumeration with no credentials at all still returns data.
+	if byName["crt"].Key != "optional" {
+		t.Errorf("crt key requirement = %q, want optional", byName["crt"].Key)
 	}
 }
