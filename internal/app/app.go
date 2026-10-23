@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/projectdiscovery/cdncheck"
 
@@ -80,12 +81,21 @@ func (a *App) Config() *config.Config { return a.cfg }
 
 // Run executes one pipeline against runCfg, which may be the process
 // configuration or a per-request copy of it.
+//
+// The run starts here, not when the ladder does: building the stages can fetch
+// a target list and health-check a resolver pool, and that time comes out of
+// the same deadline. Otherwise a run would overshoot its timeout by the setup
+// time and be killed before its report is delivered.
 func (a *App) Run(ctx context.Context, runCfg *config.Config) (*report.Report, error) {
-	stages, err := a.buildStages(ctx, runCfg)
+	started := time.Now()
+	setupCtx, cancel := context.WithDeadline(ctx, pipeline.Deadline(runCfg, started))
+	defer cancel()
+
+	stages, err := a.buildStages(setupCtx, runCfg)
 	if err != nil {
 		return nil, err
 	}
-	return pipeline.New(runCfg, stages, a.log).Run(ctx)
+	return pipeline.New(runCfg, stages, a.log).StartedAt(started).Run(ctx)
 }
 
 // resolveCredentials resolves API keys for all possible sources.
@@ -339,6 +349,12 @@ func (a *App) resolverPool(ctx context.Context) (resolvers, warnings, degraded [
 		}
 	}
 
+	// A check cut short by the caller — a canceled request, a run out of time
+	// — says nothing about the pool. This run uses what it got; caching it
+	// would hand every later run an unvalidated pool flagged as degraded.
+	if ctx.Err() != nil {
+		return resolvers, warnings, degraded, nil
+	}
 	a.pool, a.poolWarnings, a.poolDegraded = resolvers, warnings, degraded
 	return resolvers, warnings, degraded, nil
 }

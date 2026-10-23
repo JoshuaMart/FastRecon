@@ -2,8 +2,14 @@ package probe
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -390,5 +397,132 @@ func TestCanonicalURLOmitsTheDefaultPort(t *testing.T) {
 		if got := canonicalURL(parts[0], parts[1], port); got != want {
 			t.Errorf("canonicalURL(%s) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// selfSigned builds a certificate whose names identify the server it is on.
+func selfSigned(t *testing.T, name string) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: name},
+		DNSNames:     []string{name},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+func tlsServer(t *testing.T, name string, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(handler)
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{selfSigned(t, name)}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A followed response carries the certificate of wherever the chain ended.
+// The port that was probed is described by its own certificate, whatever its
+// redirect points at.
+func TestCertificateIsTheProbedEndpoints(t *testing.T) {
+	other := tlsServer(t, "other.test", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<title>Elsewhere</title>"))
+	})
+	srv := tlsServer(t, "probed.test", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/login", http.StatusFound)
+	})
+
+	host, port := hostPort(t, srv.URL)
+	got := newRealProber(t, true).probeOne(context.Background(), host, port)
+	if got == nil || got.TLS == nil {
+		t.Fatalf("service = %+v, want an HTTPS service with its certificate", got)
+	}
+	if got.FinalURL == "" {
+		t.Error("the redirect was not followed, so the test proves nothing")
+	}
+	if got.TLS.SubjectCN != "probed.test" {
+		t.Errorf("subject cn = %q, want the probed endpoint's (probed.test)", got.TLS.SubjectCN)
+	}
+}
+
+// A port that never answers a TLS handshake is a plain-HTTP port in the
+// common case. It is worth one TLS attempt, not a followed request plus a
+// no-redirect fallback that waits out the same timeout again.
+func TestSilentPortCostsOneAttemptPerScheme(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	var accepted atomic.Int32
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			defer func() { _ = conn.Close() }()
+		}
+	}()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	h, err := New(Options{
+		Concurrency:     1,
+		Timeout:         300 * time.Millisecond,
+		FollowRedirects: true,
+		MaxRedirects:    3,
+		Logger:          discardLogger(),
+	})
+	if err != nil {
+		t.Skip("cannot build a prober here:", err)
+	}
+	if got := h.probeOne(context.Background(), addr.IP.String(), addr.Port); got != nil {
+		t.Fatalf("service = %+v, want nothing from a silent port", got)
+	}
+	if n := accepted.Load(); n != 2 {
+		t.Errorf("connections = %d, want 2: one https attempt, one http", n)
+	}
+}
+
+// The second handshake belongs to the stage: once its context ends, it stops,
+// rather than running its own timeout into the output margin.
+func TestSPKIHandshakeHonoursTheContext(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+		}
+	}()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	h := &HTTPX{opts: Options{Timeout: 10 * time.Second, Logger: discardLogger()}}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	if got := h.spkiHash(ctx, addr.IP.String(), addr.Port); got != "" {
+		t.Errorf("hash = %q from a silent socket", got)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("spkiHash took %s after its context ended, want it to stop with the context", took)
 	}
 }

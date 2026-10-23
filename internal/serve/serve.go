@@ -239,9 +239,10 @@ func (s *Server) runConfig(req runRequest) (*config.Config, error) {
 	cfg := s.app.Config().Clone()
 
 	cfg.Domain = req.Domain
-	if len(req.Exclude) > 0 {
-		cfg.Exclude = req.Exclude
-	}
+	// Added to the deployment's exclusions, never in place of them: those
+	// include the exclude file, and a request that could drop them could
+	// send the run onto hosts the deployment declared out of scope.
+	cfg.Exclude = append(cfg.Exclude, req.Exclude...)
 	if req.Ports != "" {
 		cfg.Ports = req.Ports
 	}

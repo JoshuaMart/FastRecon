@@ -105,6 +105,10 @@ type Pipeline struct {
 	stages Stages
 	log    *slog.Logger
 	now    func() time.Time
+	// started is when the run began, if earlier than Run: the stages are
+	// built before the ladder starts — a target list fetched, a resolver pool
+	// health-checked — and that time is spent from the same deadline.
+	started time.Time
 }
 
 // New builds a pipeline.
@@ -112,12 +116,28 @@ func New(cfg *config.Config, stages Stages, log *slog.Logger) *Pipeline {
 	return &Pipeline{cfg: cfg, stages: stages, log: log, now: time.Now}
 }
 
+// StartedAt backdates the run to t, so the time spent building the stages
+// counts against the deadline instead of extending it.
+func (p *Pipeline) StartedAt(t time.Time) *Pipeline {
+	p.started = t
+	return p
+}
+
+// Deadline is the moment the stages must stop by: the run's start plus the
+// timeout, minus the share reserved to build and deliver the report.
+func Deadline(cfg *config.Config, started time.Time) time.Time {
+	return started.Add(time.Duration(float64(cfg.Timeout) * (1 - cfg.OutputMargin)))
+}
+
 // ErrNoImplementation is returned by a stage that is not part of this build.
 var ErrNoImplementation = errors.New("stage not implemented in this build")
 
 // Run executes stages and always returns a report (incomplete if stage fails or deadline expires).
 func (p *Pipeline) Run(ctx context.Context) (*report.Report, error) {
-	started := p.now()
+	started := p.started
+	if started.IsZero() {
+		started = p.now()
+	}
 	cfg := p.cfg
 
 	input := report.InputDomain
@@ -140,8 +160,7 @@ func (p *Pipeline) Run(ctx context.Context) (*report.Report, error) {
 	rep.Run.Degraded = append(rep.Run.Degraded, cfg.Degraded...)
 
 	// Reserve deadline portion for report building/delivery (prevents process kill on tight budget).
-	usable := time.Duration(float64(cfg.Timeout) * (1 - cfg.OutputMargin))
-	budget := NewBudget(cfg.Scope.Stages(), started.Add(usable))
+	budget := NewBudget(cfg.Scope.Stages(), Deadline(cfg, started))
 	budget.now = p.now
 
 	p.log.Info("run started",

@@ -399,3 +399,31 @@ func TestWildcardDetectionSpansSeveralApexes(t *testing.T) {
 		t.Errorf("other.net host = %+v, want live: a different apex is still in scope", got["www.other.net"])
 	}
 }
+
+// SERVFAIL and REFUSED are the resolver failing, not the name answering. A
+// host reported dead for them reads as a dangling record that does not exist.
+func TestResolverFailureLeavesTheHostUnresolved(t *testing.T) {
+	f := &fakeDNS{answers: map[string]*retryabledns.DNSData{
+		"busy.example.com":   {Host: "busy.example.com", StatusCode: "REFUSED"},
+		"broken.example.com": {Host: "broken.example.com", StatusCode: "SERVFAIL"},
+		"api.example.com":    {Host: "api.example.com", A: []string{"93.184.216.34"}, StatusCode: "NOERROR"},
+	}}
+	r := newResolver(t, "example.com", f)
+
+	res, err := r.Resolve(context.Background(), []string{"busy.example.com", "broken.example.com", "api.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := byHost(res.Hosts)
+	for _, host := range []string{"busy.example.com", "broken.example.com"} {
+		if h := got[host]; h.Status != report.StatusDiscovered || h.Reason != report.ReasonResolverError {
+			t.Errorf("%s = %+v, want discovered/resolver_error", host, h)
+		}
+	}
+	if got["api.example.com"].Status != report.StatusLive {
+		t.Errorf("api = %+v, want live", got["api.example.com"])
+	}
+	if !slices.ContainsFunc(res.Warnings, func(w string) bool { return strings.Contains(w, "2 of 3 hosts got a resolver error") }) {
+		t.Errorf("warnings = %v, want the resolver failures counted", res.Warnings)
+	}
+}

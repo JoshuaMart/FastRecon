@@ -192,9 +192,10 @@ curl -X POST localhost:8080/run \
 
 `POST /run` takes a bearer token; the body names a `domain` and, optionally, `exclude`,
 `stages`, `ports` and `timeout`. Anything omitted falls back to the environment, so a
-pre-configured deployment is called with `{"domain": "…"}` alone. The response is the
-[report document](03-output.md#report-shape). `GET /healthz` needs no token, which is what
-makes it usable as a platform probe.
+pre-configured deployment is called with `{"domain": "…"}` alone. A request's `exclude` is
+added to the deployment's exclusions, never substituted for them, so a caller cannot widen
+the scope. The response is the [report document](03-output.md#report-shape). `GET /healthz`
+needs no token, which is what makes it usable as a platform probe.
 
 | Status | Meaning |
 |---|---|

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -180,6 +181,25 @@ func TestRequestOverlaysOntoTheProcessConfiguration(t *testing.T) {
 	// Untouched fields keep the deployment's configuration.
 	if got.ScanRate != runner.cfg.ScanRate {
 		t.Errorf("scan rate = %d, want the process value %d", got.ScanRate, runner.cfg.ScanRate)
+	}
+}
+
+// The deployment's exclusions — the exclude file among them — are a scope
+// guard. A request adds to them; it cannot replace them.
+func TestRequestExclusionsAddToTheDeployments(t *testing.T) {
+	runner := &fakeRunner{cfg: baseConfig(t)}
+	runner.cfg.Exclude = []string{"*.partner.example.com"}
+	s := newTestServer(t, runner)
+
+	rec := post(t, s, "secret", `{"domain":"example.com","exclude":["test.example.com"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	if got := runner.lastCfg.Exclude; !slices.Equal(got, []string{"*.partner.example.com", "test.example.com"}) {
+		t.Errorf("exclude = %v, want the deployment's patterns kept and the request's added", got)
+	}
+	if len(runner.cfg.Exclude) != 1 {
+		t.Errorf("the process configuration was mutated: %v", runner.cfg.Exclude)
 	}
 }
 

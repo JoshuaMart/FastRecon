@@ -154,14 +154,15 @@ func (s *Scanner) probe(ctx context.Context, t target) outcome {
 			_ = conn.Close()
 			return outcomeOpen
 		}
-		// A refusal is a definitive answer: the port is closed. Retrying it
-		// would multiply the work for no new information.
-		if !isInconclusive(err) {
-			return outcomeRefused
+		// A dial cut short by the run's own end — a deadline, a signal, a
+		// caller gone — was never answered. It is not a verdict.
+		if ctx.Err() != nil {
+			return last
 		}
-		last = outcomeFiltered
-		if isExhausted(err) {
-			last = outcomeUnknown
+		res, retry := outcomeOf(err)
+		last = res
+		if !retry {
+			return last
 		}
 		// A timeout already cost a full dial budget, which is backoff enough.
 		// Running out of file descriptors did not: retrying that immediately
@@ -172,6 +173,32 @@ func (s *Scanner) probe(ctx context.Context, t target) outcome {
 		}
 	}
 	return last
+}
+
+// outcomeOf turns a failed dial into what it says about the port, and whether
+// another attempt could say something different.
+//
+// Only a refusal means closed. Everything else that is not a timeout — no
+// route from here, a local limit, an error nobody anticipated — says nothing
+// about the port, and recording it as refused would turn "could not look"
+// into "nothing listening".
+func outcomeOf(err error) (res outcome, retry bool) {
+	switch {
+	case isExhausted(err):
+		return outcomeUnknown, true
+	case isInconclusive(err):
+		return outcomeFiltered, true
+	case errors.Is(err, syscallEHOSTUNREACH):
+		return outcomeFiltered, false
+	case errors.Is(err, syscallENETUNREACH):
+		return outcomeUnknown, false
+	case isRefused(err):
+		// A definitive answer: retrying would multiply the work for no new
+		// information.
+		return outcomeRefused, false
+	default:
+		return outcomeUnknown, false
+	}
 }
 
 // exhaustionBackoff is how long a probe waits after running out of local file
@@ -202,5 +229,5 @@ func isInconclusive(err error) bool {
 // isExhausted reports whether the probe failed on a local limit rather than
 // on anything the target did.
 func isExhausted(err error) bool {
-	return errors.Is(err, syscallEMFILE) || errors.Is(err, syscallENFILE)
+	return errors.Is(err, syscallEMFILE) || errors.Is(err, syscallENFILE) || errors.Is(err, syscallEADDRNOTAVAIL)
 }

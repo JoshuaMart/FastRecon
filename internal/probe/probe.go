@@ -285,19 +285,26 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*re
 	target := scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port))
 	canonical := canonicalURL(scheme, host, port)
 
-	resp, err := h.do(ctx, h.client, target)
-	unfollowed := false
-	if err != nil && h.opts.FollowRedirects {
-		// The chain may have broken on a later hop — a redirect to a host
-		// whose TLS handshake fails, say. The first hop still answered, and
-		// a 301 from an open port is a finding worth keeping.
-		if direct, directErr := h.do(ctx, h.direct, target); directErr == nil {
-			resp, err, unfollowed = direct, nil, true
-		}
-	}
+	// The first hop is always requested on its own. It is the endpoint that
+	// was probed, so its certificate is the one recorded; and a port that does
+	// not answer costs one attempt, rather than a followed request and then a
+	// fallback that waits out the same timeout a second time.
+	first, err := h.do(ctx, h.direct, target)
 	if err != nil {
 		h.opts.Logger.Debug("probe failed", "target", target, "error", err)
 		return nil, err
+	}
+	resp, unfollowed := first, false
+	if h.opts.FollowRedirects && isRedirect(first.StatusCode) {
+		if followed, followErr := h.do(ctx, h.client, target); followErr == nil {
+			resp = followed
+		} else {
+			// The chain broke on a later hop — a redirect to a host whose TLS
+			// handshake fails, say. The first hop still answered, and a 301
+			// from an open port is a finding worth keeping.
+			unfollowed = true
+			h.opts.Logger.Debug("redirect not followed", "target", target, "error", followErr)
+		}
 	}
 
 	svc := &report.HTTP{
@@ -312,11 +319,12 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*re
 		Tech:               h.fingerprint(resp),
 		Redirects:          chain(resp),
 	}
-	// The certificate is only recorded for a connection that was itself TLS.
-	// A plain-HTTP probe that followed a redirect to an HTTPS host would
-	// otherwise attach that other endpoint's certificate to this port.
+	// The certificate is the probed endpoint's: taken from the first hop, and
+	// only when that connection was itself TLS. A followed response carries
+	// the certificate of wherever the chain ended, which would put another
+	// host's names and issuer on this port.
 	if scheme == "https" {
-		svc.TLS = certificate(resp)
+		svc.TLS = certificate(first)
 		if h.opts.SPKI && svc.TLS != nil {
 			svc.TLS.CertSPKIHash = h.spkiHash(ctx, host, port)
 		}
@@ -325,6 +333,16 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*re
 		svc.FinalURL = final
 	}
 	return svc, nil
+}
+
+// isRedirect reports whether a status asks the client to go elsewhere.
+func isRedirect(status int) bool {
+	switch status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	}
+	return false
 }
 
 // do issues one request with the given client.

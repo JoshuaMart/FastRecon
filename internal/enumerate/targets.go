@@ -135,7 +135,7 @@ func fetchTargetList(ctx context.Context, opts TargetOptions) ([]string, error) 
 		req.Header.Add(strings.TrimSpace(name), strings.TrimSpace(value))
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := targetClient(opts).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch targets: %w", err)
 	}
@@ -155,6 +155,30 @@ func fetchTargetList(ctx context.Context, opts TargetOptions) ([]string, error) 
 		return nil, fmt.Errorf("fetch targets: list exceeds %d bytes; refusing to scan a truncated list", maxTargetListBytes)
 	}
 	return scanLines(strings.NewReader(string(data)))
+}
+
+// maxTargetRedirects matches the standard client's own limit.
+const maxTargetRedirects = 10
+
+// targetClient follows redirects only where the headers would not travel
+// further than the URL they were configured for. The standard client strips
+// Authorization and Cookie on a cross-host redirect, but not a custom header
+// such as X-Api-Key, and it follows https to http without a word — after the
+// plaintext warning was decided on the original URL alone.
+func targetClient(opts TargetOptions) *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxTargetRedirects {
+				return fmt.Errorf("stopped after %d redirects", maxTargetRedirects)
+			}
+			first := via[0].URL
+			if len(opts.Headers) > 0 && (req.URL.Host != first.Host || req.URL.Scheme != first.Scheme) {
+				return fmt.Errorf("redirect to %s refused: it would send the targets-header to another endpoint",
+					opts.Redactor.Redact(req.URL.String()))
+			}
+			return nil
+		},
+	}
 }
 
 func scanLines(r io.Reader) ([]string, error) {

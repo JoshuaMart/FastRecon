@@ -35,12 +35,16 @@ const (
 	SourceRateLimited  = "rate_limited"
 )
 
-// Reasons a host ended up in the dead bucket.
+// Reasons a host ended up in the dead bucket, or was left unresolved.
 const (
 	ReasonNXDomain = "nxdomain"
 	ReasonNoAnswer = "no_answer"
 	ReasonTimeout  = "timeout"
 	ReasonWildcard = "wildcard"
+	// ReasonResolverError is a resolver that failed to answer (SERVFAIL,
+	// REFUSED). The host stays discovered: the failure is the resolver's,
+	// and calling the host dead would be a finding the run did not make.
+	ReasonResolverError = "resolver_error"
 )
 
 // Report is the complete output of one run.
@@ -169,8 +173,9 @@ type Scan struct {
 	Open     int `json:"open"`
 	Refused  int `json:"refused"`
 	Filtered int `json:"filtered"`
-	// Unknown is a probe that failed on a local limit. It says nothing about
-	// the target, so it is neither of the two above.
+	// Unknown is a probe that failed for a reason that says nothing about the
+	// port — a local limit, no route from the scanner — so it is neither of
+	// the two above.
 	Unknown int `json:"unknown"`
 }
 

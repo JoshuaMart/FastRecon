@@ -129,6 +129,8 @@ kept alongside the verdict. `nxdomain` and `no_answer` are distinct: a name that
 has no address (MX or TXT records only) is not a name that does not exist. A host the
 resolve stage never reached before its deadline is reported as `discovered`, not as dead —
 inventing a verdict for a host that was never queried would be worse than admitting the gap.
+For the same reason, a host whose resolver failed to answer (SERVFAIL, REFUSED) stays
+`discovered`, with the reason `resolver_error`, and the run warns how many there were.
 
 **Every source appears**, successful or not. A source that silently returns nothing is
 exactly what that accounting exists to expose. Each host also records the sources that
@@ -143,10 +145,12 @@ host behind a CDN carries the provider name and this marker.
 `filtered` and `unknown`, which always sum to it. Without them a report says the same thing
 for opposite findings — a host with nothing listening and a host that was never probed both
 show an empty port list. `scanned` counts what was *attempted*, so a host narrowed by
-`scan_limited` counts those ports, not the full selection. `unknown` is a probe that failed
-on a local limit (file descriptors, mostly): it says nothing about the target, so folding it
-into `refused` or `filtered` would make "everything refused" true over ports that were never
-tried. The field is **absent** when the scan did not run — a zeroed object would read as a
+`scan_limited` counts those ports, not the full selection. Only a connection the target
+turned down counts as `refused`. `unknown` is a probe that failed for a reason that says
+nothing about the port — a local limit (file descriptors, ephemeral ports), no route from the
+scanner to the address (an IPv6 address on a runner without IPv6, say): folding it into
+`refused` or `filtered` would make "everything refused" true over ports that were never
+tried. A probe still in flight when the run ends is not counted at all. The field is **absent** when the scan did not run — a zeroed object would read as a
 sweep that tried and found nothing, a different claim.
 
 **Each port records the addresses it was found open on.** Without that, one service behind

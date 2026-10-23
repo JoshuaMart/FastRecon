@@ -118,6 +118,9 @@ func (r *DNSX) Resolve(ctx context.Context, hosts []string) (pipeline.Resolution
 	})
 
 	out.Hosts = results
+	if failed := countReason(results, report.ReasonResolverError); failed > 0 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("%d of %d hosts got a resolver error (SERVFAIL, REFUSED) and were left unresolved", failed, len(hosts)))
+	}
 	if unchecked > 0 {
 		out.Truncated = true
 		out.Warnings = append(out.Warnings, fmt.Sprintf("%d of %d hosts were not resolved before the stage deadline", unchecked, len(hosts)))
@@ -158,6 +161,12 @@ func (r *DNSX) resolveOne(host string, wc *wildcards) report.Host {
 	case strings.EqualFold(data.StatusCode, "NXDOMAIN"):
 		out.Status = report.StatusDead
 		out.Reason = report.ReasonNXDomain
+	case data.StatusCode != "" && !strings.EqualFold(data.StatusCode, "NOERROR"):
+		// SERVFAIL, REFUSED and the like are the resolver failing, not the
+		// name answering. A rate-limited or hostile resolver would otherwise
+		// turn live hosts into dead ones that read like dangling records.
+		out.Status = report.StatusDiscovered
+		out.Reason = report.ReasonResolverError
 	default:
 		// No address, but a CNAME: a dangling alias, which is exactly the kind
 		// of thing this stage exists to surface.
@@ -165,6 +174,16 @@ func (r *DNSX) resolveOne(host string, wc *wildcards) report.Host {
 		out.Reason = report.ReasonNoAnswer
 	}
 	return out
+}
+
+func countReason(hosts []report.Host, reason string) int {
+	n := 0
+	for _, h := range hosts {
+		if h.Reason == reason {
+			n++
+		}
+	}
+	return n
 }
 
 // answersOf extracts the addresses and aliases from a DNS answer.

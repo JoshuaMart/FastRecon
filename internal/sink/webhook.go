@@ -79,8 +79,15 @@ func NewWebhook(opts WebhookOptions) (*Webhook, error) {
 		headers: headers,
 		retries: opts.Retries,
 		log:     opts.Logger,
-		client:  &http.Client{Timeout: opts.Timeout},
-		sleep:   sleepCtx,
+		client: &http.Client{
+			Timeout: opts.Timeout,
+			// A redirect is answered, not followed. Following a 301/302/303
+			// turns the POST into a GET without the report, whose 2xx would
+			// then count as a delivery; and every custom header — usually the
+			// credential — would be re-sent to wherever the redirect points.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+		sleep: sleepCtx,
 	}, nil
 }
 
@@ -158,7 +165,13 @@ type statusError struct {
 	retryAfter time.Duration
 }
 
-func (e statusError) Error() string { return "unexpected status " + strconv.Itoa(e.status) }
+func (e statusError) Error() string {
+	msg := "unexpected status " + strconv.Itoa(e.status)
+	if e.status >= 300 && e.status < 400 {
+		msg += ": redirects are not followed, point webhook-url at the final address"
+	}
+	return msg
+}
 
 // retryable reports whether another attempt could plausibly succeed.
 func retryable(err error) bool {

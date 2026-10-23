@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -179,5 +180,37 @@ func TestListEnumeratorQueriesNoSource(t *testing.T) {
 func TestNewListRefusesAnEmptyList(t *testing.T) {
 	if _, err := NewList(nil, discardLogger()); err == nil {
 		t.Error("NewList accepted an empty list")
+	}
+}
+
+// A custom header is re-sent on a cross-host redirect by the standard client,
+// and an https list redirected to http would carry it in clear text after the
+// plaintext check had already passed.
+func TestTargetsURLRefusesToCarryHeadersAcrossARedirect(t *testing.T) {
+	var leaked atomic.Bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "" {
+			leaked.Store(true)
+		}
+		_, _ = w.Write([]byte("api.example.com\n"))
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/targets.txt", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	_, err := LoadTargets(context.Background(), loadOpts(TargetOptions{URL: srv.URL, Headers: []string{"X-Api-Key: s3cret"}}))
+	if err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Errorf("err = %v, want the redirect refused", err)
+	}
+	if leaked.Load() {
+		t.Error("the header reached the redirect target")
+	}
+
+	// Without a header there is nothing to leak, and a moved list still loads.
+	got, err := LoadTargets(context.Background(), loadOpts(TargetOptions{URL: srv.URL}))
+	if err != nil || !slices.Equal(got, []string{"api.example.com"}) {
+		t.Errorf("hosts = %v, err = %v, want the redirect followed", got, err)
 	}
 }

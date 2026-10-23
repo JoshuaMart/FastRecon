@@ -227,3 +227,31 @@ func TestNewWebhookRejectsUnusableOptions(t *testing.T) {
 		}
 	}
 }
+
+// Following a 301/302/303 turns the POST into a GET without the report, and
+// that GET's 2xx would read as a delivery. A redirect is a failure that says
+// where the endpoint moved, and the credential header never travels with it.
+func TestWebhookRefusesToFollowRedirects(t *testing.T) {
+	var targetHits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer srv.Close()
+
+	wh, _ := newTestWebhook(t, WebhookOptions{URL: srv.URL, Headers: []string{"X-Api-Key: s3cret"}, Retries: 2})
+	err := wh.Deliver(context.Background(), []byte(`{}`))
+	if err == nil {
+		t.Fatal("a redirected delivery was reported as successful")
+	}
+	if !strings.Contains(err.Error(), "302") || !strings.Contains(err.Error(), "redirect") {
+		t.Errorf("err = %v, want the status and the reason", err)
+	}
+	if targetHits.Load() != 0 {
+		t.Error("the redirect target was contacted")
+	}
+}

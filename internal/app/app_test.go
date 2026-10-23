@@ -11,6 +11,7 @@ import (
 
 	"github.com/JoshuaMart/FastRecon/internal/config"
 	"github.com/JoshuaMart/FastRecon/internal/logging"
+	"github.com/JoshuaMart/FastRecon/internal/pipeline"
 	"github.com/JoshuaMart/FastRecon/internal/report"
 	"github.com/JoshuaMart/FastRecon/internal/stage"
 )
@@ -246,5 +247,54 @@ func TestUnvalidatedPoolIsFlaggedWhenEveryResolverFails(t *testing.T) {
 	}
 	if len(warnings) == 0 {
 		t.Error("the prose channel lost the condition")
+	}
+}
+
+// A health check the caller abandoned says nothing about the pool. Caching
+// its outcome would leave every later run on an unvalidated pool, flagged as
+// degraded, until the process restarts.
+func TestAbandonedHealthCheckIsNotCached(t *testing.T) {
+	cfg := baseConfig(stage.ScopeResolve)
+	cfg.Resolvers = []string{"192.0.2.1", "192.0.2.2"}
+	cfg.ValidateResolvers = true
+
+	a := newApp(t, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	resolvers, _, _, err := a.resolverPool(ctx)
+	if err != nil {
+		t.Fatalf("resolverPool: %v", err)
+	}
+	if len(resolvers) != 2 {
+		t.Errorf("resolvers = %v, want the pool kept for this run", resolvers)
+	}
+	if a.pool != nil {
+		t.Errorf("pool = %v cached from a canceled check, want nothing cached", a.pool)
+	}
+}
+
+// Building the stages comes out of the run's deadline: a setup that took
+// longer than the stage budget leaves the ladder nothing, rather than a full
+// budget measured from after the setup.
+func TestSetupTimeCountsAgainstTheDeadline(t *testing.T) {
+	cfg := baseConfig(stage.ScopeEnum)
+	cfg.Timeout = time.Second
+
+	started := time.Now().Add(-2 * time.Second)
+	got := pipeline.Deadline(cfg, started)
+	if want := started.Add(900 * time.Millisecond); !got.Equal(want) {
+		t.Errorf("deadline = %v, want start + timeout minus the output margin (%v)", got, want)
+	}
+
+	rep, err := pipeline.New(cfg, pipeline.Stages{}, logging.Discard()).StartedAt(started).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !rep.Run.Started.Equal(started.UTC()) {
+		t.Errorf("started = %v, want the backdated start %v", rep.Run.Started, started.UTC())
+	}
+	if !rep.Run.TruncatedByTimeout {
+		t.Error("a run whose setup consumed the deadline must report the truncation")
 	}
 }

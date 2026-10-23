@@ -18,21 +18,26 @@ import (
 // renewal when the key is reused, which is the whole reason it correlates
 // infrastructure.
 func (h *HTTPX) spkiHash(ctx context.Context, host string, port int) string {
-	dialer := &net.Dialer{Timeout: h.opts.Timeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), &tls.Config{
-		ServerName: host,
-		// An expired or self-signed certificate is a finding, not a reason to
-		// refuse to look at it.
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS10,
-	})
+	// Bound by the stage context as well as the timeout: a handshake still in
+	// flight at the deadline would otherwise run on into the output margin.
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: h.opts.Timeout},
+		Config: &tls.Config{
+			ServerName: host,
+			// An expired or self-signed certificate is a finding, not a
+			// reason to refuse to look at it.
+			InsecureSkipVerify: true,
+			MinVersion:         tls.VersionTLS10,
+		},
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		h.opts.Logger.Debug("spki handshake failed", "host", host, "port", port, "error", err)
 		return ""
 	}
 	defer func() { _ = conn.Close() }()
 
-	certs := conn.ConnectionState().PeerCertificates
+	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		return ""
 	}
