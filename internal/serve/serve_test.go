@@ -248,6 +248,108 @@ func TestOversizedBodyIsRejected(t *testing.T) {
 	}
 }
 
+// A target list runs through the real stage wiring: the same loader and
+// enumerator the command line uses, with no source queried.
+func TestTargetsReplaceEnumeration(t *testing.T) {
+	cfg := baseConfig(t)
+	cfg.Exclude = []string{"admin.example.com"}
+	a, err := app.New(cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("app.New: %v", err)
+	}
+	s, err := New(a, &config.Config{APIToken: "secret"}, discardLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	rec := post(t, s, "secret", `{"targets":["WWW.example.com","api.example.net.","admin.example.com","old.example.com"],"exclude":["old.example.com"],"stages":"enum"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	var got report.Report
+	if err := json.Unmarshal(bytes.TrimSpace(rec.Body.Bytes()), &got); err != nil {
+		t.Fatalf("response is not a report: %v", err)
+	}
+	if got.Run.Input != report.InputTargets {
+		t.Errorf("input = %q, want %q", got.Run.Input, report.InputTargets)
+	}
+	if len(got.Sources) != 0 {
+		t.Errorf("sources = %v, want none queried", got.Sources)
+	}
+	if got.Run.Domain != "" {
+		t.Errorf("domain = %q, want no label when none was given", got.Run.Domain)
+	}
+	if got.Stats.Enumerated != 4 || got.Stats.Excluded != 2 {
+		t.Errorf("stats = %+v, want 4 supplied and 2 excluded", got.Stats)
+	}
+	var names []string
+	for _, h := range got.Hosts {
+		names = append(names, h.Host)
+	}
+	// The deployment's exclusion and the request's both apply to the list.
+	if !slices.Equal(names, []string{"api.example.net", "www.example.com"}) {
+		t.Errorf("hosts = %v, want the list normalized and both exclusions applied", names)
+	}
+}
+
+func TestTargetsOverlayOntoTheProcessConfiguration(t *testing.T) {
+	runner := &fakeRunner{cfg: baseConfig(t)}
+	runner.cfg.TargetsFile = "/deployment/list.txt"
+	s := newTestServer(t, runner)
+
+	rec := post(t, s, "secret", `{"domain":"Example.COM","targets":["b.example.com","a.example.com"],"stages":"resolve"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	got := runner.lastCfg
+	if !slices.Equal(got.Targets, []string{"a.example.com", "b.example.com"}) || got.TargetsFile != "" {
+		t.Errorf("targets = %v / %q, want only the request's list", got.Targets, got.TargetsFile)
+	}
+	if got.Domain != "example.com" {
+		t.Errorf("domain = %q, want the label normalized", got.Domain)
+	}
+	if len(runner.cfg.Targets) != 0 {
+		t.Errorf("the process configuration was mutated: %v", runner.cfg.Targets)
+	}
+}
+
+// A list is scanned whole or not at all: a host dropped for its formatting is
+// a host never queried, and nothing downstream would say so.
+func TestInvalidTargets(t *testing.T) {
+	runner := &fakeRunner{}
+	s := newTestServer(t, runner)
+
+	cases := map[string]string{
+		"empty list":       `{"targets":[]}`,
+		"scheme":           `{"targets":["a.example.com","https://b.example.com"]}`,
+		"path":             `{"targets":["a.example.com/login"]}`,
+		"port":             `{"targets":["a.example.com:8443"]}`,
+		"single label":     `{"targets":["localhost"]}`,
+		"bad domain label": `{"domain":"https://example.com","targets":["a.example.com"]}`,
+		"not a list":       `{"targets":"a.example.com"}`,
+	}
+	for name, body := range cases {
+		rec := post(t, s, "secret", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400 (body %s)", name, rec.Code, rec.Body)
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(`{"targets":["a.example.com"`)
+	for i := 0; b.Len() <= maxBodyBytes; i++ {
+		fmt.Fprintf(&b, `,"host-%d.example.com"`, i)
+	}
+	b.WriteString(`]}`)
+	if rec := post(t, s, "secret", b.String()); rec.Code != http.StatusBadRequest {
+		t.Errorf("oversized list: status = %d, want 400", rec.Code)
+	}
+
+	if runner.calls != 0 {
+		t.Errorf("an invalid list reached the pipeline %d time(s)", runner.calls)
+	}
+}
+
 // Refused rather than queued, so a request does not spend its deadline waiting.
 func TestSecondConcurrentRunIsRefused(t *testing.T) {
 	runner := &fakeRunner{block: make(chan struct{})}

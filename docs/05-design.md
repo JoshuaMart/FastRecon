@@ -71,6 +71,10 @@ statistics (verified in the engine's source). Hence:
 - **Exclusions only add up**: a request's `exclude` extends the deployment's, so it cannot
   lift a scope guard.
 
+What a request *may* set is the target — a `domain` or a `targets` list — and how far to
+take it. A list goes through the CLI's loader before the run takes the instance, so a bad
+entry is refused whole rather than scanned in part.
+
 Rejected: forking the engine to keep keys per run — forty-seven source integrations to
 maintain, for what a mutex solves.
 

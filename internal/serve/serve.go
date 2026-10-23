@@ -21,15 +21,19 @@ import (
 
 	"github.com/JoshuaMart/FastRecon/internal/app"
 	"github.com/JoshuaMart/FastRecon/internal/config"
+	"github.com/JoshuaMart/FastRecon/internal/enumerate"
 	"github.com/JoshuaMart/FastRecon/internal/report"
 	"github.com/JoshuaMart/FastRecon/internal/secrets"
 	"github.com/JoshuaMart/FastRecon/internal/stage"
 )
 
 const (
-	// maxBodyBytes bounds a request body: a handful of fields, so anything
-	// larger is a mistake or an attempt to exhaust the instance.
-	maxBodyBytes = 64 << 10
+	// maxBodyBytes bounds a request body: a handful of fields and at most a
+	// target list, so anything larger is a mistake or an attempt to exhaust
+	// the instance. It is a refusal, not a truncation: a list cut short would
+	// turn hosts that were never queried into hosts that did not answer. A
+	// list this size is far past what fits in one function's timeout.
+	maxBodyBytes = 1 << 20
 	// busyRetryAfter is what a caller is told to wait when a run holds the
 	// instance.
 	busyRetryAfter = 30 * time.Second
@@ -125,8 +129,12 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 // engine holds credentials in process-global state, and a caller-supplied
 // destination would turn the function into a request forwarder onto its own
 // network.
+//
+// Targets is the CLI's --targets: the run scans exactly these hosts instead of
+// enumerating, and Domain becomes an optional label for the report.
 type runRequest struct {
 	Domain  string   `json:"domain"`
+	Targets []string `json:"targets,omitempty"`
 	Exclude []string `json:"exclude,omitempty"`
 	Stages  string   `json:"stages,omitempty"`
 	Ports   string   `json:"ports,omitempty"`
@@ -155,7 +163,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runCfg, err := s.runConfig(req)
+	runCfg, err := s.runConfig(r.Context(), req)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
@@ -234,10 +242,28 @@ func decodeRequest(w http.ResponseWriter, r *http.Request) (runRequest, error) {
 
 // runConfig overlays the request onto the process configuration and validates
 // the result with the same rules the command line uses.
-func (s *Server) runConfig(req runRequest) (*config.Config, error) {
+func (s *Server) runConfig(ctx context.Context, req runRequest) (*config.Config, error) {
 	cfg := s.app.Config().Clone()
 
 	cfg.Domain = req.Domain
+	// The request says what to scan, so a list configured on the deployment
+	// does not run in its place or merge into it.
+	cfg.Targets, cfg.TargetsFile, cfg.TargetsURL, cfg.TargetsHeader = nil, "", "", nil
+	// Present but empty is refused rather than read as "no list": it is a
+	// caller whose list came out empty, not one asking to enumerate.
+	if req.Targets != nil {
+		// Checked here, with the loader the command line uses, so a bad list
+		// is a 400 before the run takes the instance.
+		hosts, err := enumerate.LoadTargets(ctx, enumerate.TargetOptions{
+			Inline:   req.Targets,
+			Redactor: s.app.Redactor(),
+			Logger:   s.log,
+		})
+		if err != nil {
+			return nil, err
+		}
+		cfg.Targets = hosts
+	}
 	// Added to the deployment's exclusions, never in place of them: those
 	// include the exclude file, and a request that could drop them could
 	// send the run onto hosts the deployment declared out of scope.
