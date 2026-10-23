@@ -129,15 +129,13 @@ func resolveConfig(fs *pflag.FlagSet, requireDomain bool) (*Config, error) {
 	return cfg, nil
 }
 
-// maxLineBytes raises the line ceiling above the scanner's 64KB default. An
-// exclusion regexp can be long, and a fetched list can arrive as one line with
-// no separators at all; both would otherwise fail with an error that names
-// neither the file nor the cause.
+// maxLineBytes raises the line ceiling above the scanner's 64KB default: a
+// long regexp or a fetched list arriving as one line would otherwise fail
+// with an error naming neither the file nor the cause.
 const maxLineBytes = 1 << 20
 
-// mergeExcludeFile appends the patterns of --exclude-file to the inline ones.
-// Parsing the patterns themselves belongs to the exclusion stage; here they
-// are only collected.
+// mergeExcludeFile appends the patterns of --exclude-file to the inline ones;
+// parsing them belongs to the exclusion stage.
 func (c *Config) mergeExcludeFile() error {
 	if c.ExcludeFile == "" {
 		return nil
@@ -335,10 +333,10 @@ func splitValue(name, value string) []string {
 // splitPatterns separates exclusion patterns.
 //
 // Lines are the outer separator. A line starting with "re:" is a single
-// pattern, kept whole — a regexp may contain commas, and cutting one produces
-// two halves that still compile, so the mistake would be silent. Any other
-// line is a comma-separated list of hosts and wildcards, which is what makes
-// the compact form usable in a job's environment variable.
+// pattern, kept whole: a regexp's repeat count contains a comma, and cutting
+// it yields two halves that still compile, so the run would silently scan
+// excluded hosts. Any other line is a comma-separated list of hosts and
+// wildcards, which keeps the compact form usable in an environment variable.
 func splitPatterns(value string) []string {
 	var out []string
 	for line := range strings.SplitSeq(value, "\n") {

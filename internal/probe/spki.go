@@ -12,14 +12,13 @@ import (
 // spkiHash returns the lowercase hex SHA-256 of the certificate's
 // SubjectPublicKeyInfo.
 //
-// It costs a second handshake because the HTTP client hands back the parsed
-// certificate fields, not the DER, and the fingerprints it does expose are of
-// the certificate — those change on every renewal. An SPKI hash survives
-// renewal when the key is reused, which is the whole reason it correlates
-// infrastructure.
+// It costs a second handshake: the HTTP client returns parsed certificate
+// fields, not the DER, and its fingerprints are of the certificate, which
+// change on every renewal. An SPKI hash survives renewal when the key is
+// reused, which is what makes it correlate infrastructure.
 func (h *HTTPX) spkiHash(ctx context.Context, host string, port int) string {
-	// Bound by the stage context as well as the timeout: a handshake still in
-	// flight at the deadline would otherwise run on into the output margin.
+	// Bound by the stage context as well as the timeout, or a handshake in
+	// flight at the deadline runs on into the output margin.
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: h.opts.Timeout},
 		Config: &tls.Config{

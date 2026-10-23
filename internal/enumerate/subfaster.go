@@ -57,10 +57,9 @@ func NewSubfaster(opts Options) (*Subfaster, error) {
 	if opts.Redactor == nil {
 		opts.Redactor = secrets.NewRedactor(nil)
 	}
-	// The engine takes whole seconds and truncates, so anything under a second
-	// becomes no ceiling at all and lets one hung source eat the whole stage.
-	// The configuration layer rejects it too; this is the package standing on
-	// its own.
+	// The engine truncates to whole seconds, so under a second means no
+	// ceiling and one hung source eats the whole stage. Config rejects it too;
+	// this keeps the package safe standalone.
 	if opts.SourceTimeout < time.Second {
 		return nil, errors.New("enumerate: source timeout must be at least 1s")
 	}
@@ -227,8 +226,8 @@ func (s *Subfaster) sourceNames() []string {
 }
 
 // needsKey reports whether a source can use a credential at all. Optional-key
-// sources count: they mark themselves skipped precisely when no key is
-// configured, so "skipped_no_key" is the accurate reason for them too.
+// sources count: they mark themselves skipped when no key is configured, so
+// "skipped_no_key" is accurate for them too.
 func (s *Subfaster) needsKey(name string) bool {
 	src, ok := passive.NameSourceMap[name]
 	if !ok {
@@ -244,7 +243,7 @@ func (s *Subfaster) hasKey(name string) bool {
 }
 
 // enumerationBudget derives the engine's overall time limit from the stage
-// deadline the pipeline handed down.
+// deadline.
 func enumerationBudget(ctx context.Context) time.Duration {
 	dl, ok := ctx.Deadline()
 	if !ok {
@@ -253,8 +252,7 @@ func enumerationBudget(ctx context.Context) time.Duration {
 	if d := time.Until(dl); d > 0 {
 		return d
 	}
-	// Already out of time: let the engine close immediately rather than
-	// starting requests that cannot finish.
+	// Already out of time: let the engine close immediately.
 	return time.Millisecond
 }
 
@@ -267,9 +265,8 @@ func normalize(value, domain string) (string, bool) {
 	if h == "" || strings.ContainsAny(h, " \t/:@") || strings.Contains(h, "..") {
 		return "", false
 	}
-	// Only convert when there is something to convert: the IDNA lookup
-	// profile rejects underscores, which are legitimate in names like
-	// _dmarc.example.com.
+	// Only convert when needed: the IDNA lookup profile rejects underscores,
+	// which are legitimate in names like _dmarc.example.com.
 	if hasNonASCII(h) {
 		ascii, err := idna.ToASCII(h)
 		if err != nil {
@@ -406,8 +403,7 @@ type SourceInfo struct {
 }
 
 // bridge routes the engine's own logging into the structured logger on
-// stderr. stdout carries the report and must stay parseable, and unstructured
-// lines interleaved with JSON logs are unreadable in a log-only environment.
+// stderr: stdout carries the report and must stay parseable.
 type bridge struct{ log *slog.Logger }
 
 func (b bridge) Write(data []byte, level levels.Level) {

@@ -75,8 +75,7 @@ func (r *DNSX) Name() string { return "dnsx" }
 // Resolve classifies every host as live, dead or a wildcard artifact.
 //
 // Nothing is dropped: a host that does not resolve stays in the report with
-// the reason it failed, because a dangling CNAME or a vanished host is a
-// finding in its own right.
+// its failure reason, since a dangling CNAME or vanished host is a finding.
 func (r *DNSX) Resolve(ctx context.Context, hosts []string) (pipeline.Resolution, error) {
 	var out pipeline.Resolution
 	if len(hosts) == 0 {
@@ -89,8 +88,8 @@ func (r *DNSX) Resolve(ctx context.Context, hosts []string) (pipeline.Resolution
 		"concurrency", r.opts.Concurrency,
 	)
 
-	// Wildcards are established first: without them a single wildcard record
-	// turns thousands of junk names into apparently live hosts.
+	// Wildcards first: otherwise one wildcard record turns thousands of junk
+	// names into apparently live hosts.
 	wc := r.detectWildcards(ctx, hosts)
 	if len(wc.byParent) > 0 {
 		parents := make([]string, 0, len(wc.byParent))
@@ -105,9 +104,9 @@ func (r *DNSX) Resolve(ctx context.Context, hosts []string) (pipeline.Resolution
 		out.Warnings = append(out.Warnings, fmt.Sprintf("%d zone(s) were not checked for a wildcard record: the run covers the %d that hold the most hosts", wc.unprobed, maxWildcardParents))
 	}
 
-	// Pre-filled with the verdict a host keeps when the stage runs out of time
-	// before reaching it: discovered, but not resolved. Inventing "dead" for a
-	// host that was never queried would be a finding the run did not make.
+	// Pre-filled with the verdict of a host the stage never reached:
+	// discovered, not resolved. "dead" for an unqueried host would be a
+	// finding the run did not make.
 	results := make([]report.Host, len(hosts))
 	for i, host := range hosts {
 		results[i] = report.Host{Host: host, Status: report.StatusDiscovered}
@@ -163,13 +162,12 @@ func (r *DNSX) resolveOne(host string, wc *wildcards) report.Host {
 		out.Reason = report.ReasonNXDomain
 	case data.StatusCode != "" && !strings.EqualFold(data.StatusCode, "NOERROR"):
 		// SERVFAIL, REFUSED and the like are the resolver failing, not the
-		// name answering. A rate-limited or hostile resolver would otherwise
-		// turn live hosts into dead ones that read like dangling records.
+		// name answering; otherwise a rate-limited resolver turns live hosts
+		// into apparent dangling records.
 		out.Status = report.StatusDiscovered
 		out.Reason = report.ReasonResolverError
 	default:
-		// No address, but a CNAME: a dangling alias, which is exactly the kind
-		// of thing this stage exists to surface.
+		// No address, but a CNAME: a dangling alias.
 		out.Status = report.StatusDead
 		out.Reason = report.ReasonNoAnswer
 	}

@@ -108,8 +108,8 @@ type target struct {
 // before moving to the next. Address-major order would hammer a single host
 // with the whole port list back to back.
 //
-// Targets are generated rather than materialised: the full list for a wide
-// sweep is itself large enough to be worth not holding.
+// Targets are generated, not materialised: the full list of a wide sweep is
+// itself too large to hold.
 func feed(ctx context.Context, queue chan<- target, addresses []string, ports []int) {
 	defer close(queue)
 	for _, p := range ports {
@@ -165,9 +165,8 @@ func (s *Scanner) probe(ctx context.Context, t target) outcome {
 			return last
 		}
 		// A timeout already cost a full dial budget, which is backoff enough.
-		// Running out of file descriptors did not: retrying that immediately
-		// only spends the next attempt hitting the same ceiling, and with
-		// every worker doing it at once the ceiling does not move.
+		// Descriptor exhaustion did not: with every worker retrying at once,
+		// an immediate retry just hits the same ceiling.
 		if isExhausted(err) && !sleepCtx(ctx, exhaustionBackoff) {
 			return last
 		}
@@ -178,10 +177,9 @@ func (s *Scanner) probe(ctx context.Context, t target) outcome {
 // outcomeOf turns a failed dial into what it says about the port, and whether
 // another attempt could say something different.
 //
-// Only a refusal means closed. Everything else that is not a timeout — no
-// route from here, a local limit, an error nobody anticipated — says nothing
-// about the port, and recording it as refused would turn "could not look"
-// into "nothing listening".
+// Only a refusal means closed. Anything else that is not a timeout (no route,
+// a local limit, an unexpected error) says nothing about the port; recording
+// it as refused would turn "could not look" into "nothing listening".
 func outcomeOf(err error) (res outcome, retry bool) {
 	switch {
 	case isExhausted(err):

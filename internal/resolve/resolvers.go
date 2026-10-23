@@ -99,8 +99,8 @@ func readResolverFile(path string) ([]string, error) {
 	return out, nil
 }
 
-// fetchResolverList downloads a resolver list. This exists for the serverless
-// deployments, which have no volume to mount a file from.
+// fetchResolverList downloads a resolver list, for serverless deployments
+// that have no volume to mount a file from.
 func fetchResolverList(ctx context.Context, raw string, timeout time.Duration, log *slog.Logger) ([]string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -109,8 +109,8 @@ func fetchResolverList(ctx context.Context, raw string, timeout time.Duration, l
 	switch u.Scheme {
 	case "https":
 	case "http":
-		// The list decides where every DNS query goes, and plaintext is a
-		// channel anyone on the path can rewrite.
+		// The list decides where every DNS query goes; anyone on the path
+		// can rewrite plaintext.
 		log.Warn("resolvers url uses http: the list can be rewritten in transit", "url", raw)
 	default:
 		return nil, fmt.Errorf("resolvers url %q must use http or https", raw)
@@ -148,9 +148,8 @@ func fetchResolverList(ctx context.Context, raw string, timeout time.Duration, l
 func scanResolvers(r io.Reader) ([]string, error) {
 	var out []string
 	sc := bufio.NewScanner(r)
-	// Above the scanner's 64KB default: a published list that arrives with no
-	// line separators is malformed, but it should say so rather than fail on
-	// a token-length error.
+	// Above the 64KB default so a list with no line separators is reported
+	// as malformed rather than failing on a token-length error.
 	sc.Buffer(nil, 1<<20)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -183,9 +182,8 @@ func parseResolvers(raw []string) (resolvers, malformed []string) {
 
 // parseResolver accepts an IP with or without a port and returns host:port.
 //
-// Only literal addresses are accepted: a resolver given as a hostname would
-// have to be resolved by some other resolver first, which is a dependency
-// this stage should not have.
+// Only literal addresses are accepted: a hostname would need another
+// resolver first, a dependency this stage should not have.
 func parseResolver(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {

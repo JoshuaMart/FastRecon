@@ -162,9 +162,9 @@ const maxTargetRedirects = 10
 
 // targetClient follows redirects only where the headers would not travel
 // further than the URL they were configured for. The standard client strips
-// Authorization and Cookie on a cross-host redirect, but not a custom header
-// such as X-Api-Key, and it follows https to http without a word — after the
-// plaintext warning was decided on the original URL alone.
+// Authorization and Cookie cross-host, but not a custom header such as
+// X-Api-Key, and follows https to http after the plaintext warning was decided
+// on the original URL alone.
 func targetClient(opts TargetOptions) *http.Client {
 	return &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {

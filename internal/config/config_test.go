@@ -87,8 +87,7 @@ func TestEnvListSplitting(t *testing.T) {
 }
 
 // A regexp repeat count contains a comma. Splitting on it yields two halves
-// that both still compile, so the run would quietly scan hosts the operator
-// excluded — the worst possible failure for an exclusion.
+// that both still compile, so the run would quietly scan excluded hosts.
 func TestRegexExclusionsSurviveEnvSplitting(t *testing.T) {
 	t.Setenv("FASTRECON_EXCLUDE", `re:^a{1,3}\.example\.com$`+"\nadmin.example.com, www.example.com")
 	cfg := mustLoad(t, "-d", "example.com")
@@ -226,9 +225,8 @@ func TestDetectEnvironmentPrefersExplicitLabel(t *testing.T) {
 	}
 }
 
-// The same value must mean the same thing however it is supplied. A user
-// translating FASTRECON_SOURCES=a,b from the deployment docs into --sources
-// a,b would otherwise get an error.
+// The same value must mean the same thing however it is supplied:
+// FASTRECON_SOURCES=a,b and --sources a,b must agree.
 func TestCommaListsAgreeBetweenFlagAndEnvironment(t *testing.T) {
 	fromFlag := mustLoad(t, "-d", "example.com", "--sources", "crt,thc", "--resolvers", "1.1.1.1,8.8.8.8")
 	if len(fromFlag.Sources) != 2 || fromFlag.Sources[1] != "thc" {

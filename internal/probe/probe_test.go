@@ -250,9 +250,8 @@ func TestProbeOneDetectsHTTPSOnAnUnusualPort(t *testing.T) {
 	}
 }
 
-// A plain request to an HTTPS port often returns a real HTTP 400, which looks
-// exactly like a working HTTP service. Trying TLS first is what prevents that
-// misclassification.
+// A plain request to an HTTPS port often returns a real HTTP 400 that looks
+// like a working HTTP service; trying TLS first prevents that.
 func TestHTTPSIsPreferredOverAPlainTextErrorOnTheSamePort(t *testing.T) {
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("<title>Secure</title>"))
@@ -302,9 +301,8 @@ func TestProbeOneReturnsNothingOnAClosedPort(t *testing.T) {
 }
 
 // A refused connection must survive the client's error wrapping as something
-// dialFailed recognises. If it does not, the second scheme is attempted on
-// every closed port and the short circuit is dead code that costs a full
-// probe budget per port.
+// dialFailed recognises; otherwise the second scheme is attempted on every
+// closed port, costing a full probe budget each.
 func TestRefusedConnectionIsRecognisedThroughTheClient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	host, port := hostPort(t, srv.URL)
@@ -321,8 +319,8 @@ func TestRefusedConnectionIsRecognisedThroughTheClient(t *testing.T) {
 }
 
 // The mirror of the case above: a timeout leaves the port's nature unknown,
-// and a plain-HTTP server that simply waits on a TLS ClientHello is the whole
-// reason the second scheme is tried at all.
+// and a plain-HTTP server waiting on a TLS ClientHello is why the second
+// scheme is tried at all.
 func TestTimeoutDoesNotSkipTheSecondScheme(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -455,9 +453,9 @@ func TestCertificateIsTheProbedEndpoints(t *testing.T) {
 	}
 }
 
-// A port that never answers a TLS handshake is a plain-HTTP port in the
-// common case. It is worth one TLS attempt, not a followed request plus a
-// no-redirect fallback that waits out the same timeout again.
+// A port that never answers a TLS handshake is usually plain HTTP: it is worth
+// one TLS attempt, not a followed request plus a fallback waiting the same
+// timeout again.
 func TestSilentPortCostsOneAttemptPerScheme(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

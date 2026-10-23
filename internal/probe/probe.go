@@ -114,9 +114,8 @@ func (h *HTTPX) Name() string { return "httpx" }
 
 // Probe checks every open port for an HTTP service.
 //
-// Only the ports the scan actually found are probed. Assuming 80 and 443
-// would report services that were never observed and miss the ones on
-// unusual ports, which is the entire reason the scan runs first.
+// Only the ports the scan found are probed; assuming 80 and 443 would report
+// unobserved services and miss those on unusual ports.
 func (h *HTTPX) Probe(ctx context.Context, hosts []report.Host) (pipeline.Probe, error) {
 	out := pipeline.Probe{Hosts: hosts}
 
@@ -128,9 +127,8 @@ func (h *HTTPX) Probe(ctx context.Context, hosts []report.Host) (pipeline.Probe,
 
 	h.opts.Logger.Debug("http probe started", "targets", len(targets), "concurrency", h.opts.Concurrency, "rate", h.opts.Rate)
 
-	// The limiter belongs to the run, not to the prober: a stopped limiter's
-	// Wait returns immediately, so a reused instance would lose its rate
-	// limit from the second run onwards.
+	// The limiter belongs to the run, not the prober: a stopped limiter's Wait
+	// returns immediately, so a reused instance would lose its rate limit.
 	limiter := ratelimit.New(h.opts.Rate)
 	defer limiter.Stop()
 
@@ -146,9 +144,8 @@ func (h *HTTPX) Probe(ctx context.Context, hosts []report.Host) (pipeline.Probe,
 		mu.Unlock()
 	}
 
-	// A fixed pool over a stream of indexes, rather than a goroutine per
-	// target: the worker count is what --probe-concurrency promises, and
-	// nothing is allocated for work that may never start.
+	// A fixed pool over a stream of indexes, not a goroutine per target: the
+	// worker count is what --probe-concurrency promises.
 	queue := make(chan int)
 	for range h.opts.Concurrency {
 		wg.Add(1)
@@ -222,11 +219,10 @@ func attach(hosts []report.Host, targets []target, results []*report.HTTP) []rep
 
 // probeOne tries a port over HTTPS, then over plain HTTP.
 //
-// HTTPS is always tried first, on every port, because the TLS handshake is
-// the only reliable discriminator. Trying HTTP first would misclassify TLS
-// ports: a plain request to an HTTPS port commonly returns a real HTTP 400
-// ("The plain HTTP request was sent to HTTPS port"), which looks exactly like
-// a working HTTP service. A handshake, by contrast, either succeeds or fails.
+// HTTPS is tried first on every port because the TLS handshake is the only
+// reliable discriminator: a plain request to an HTTPS port commonly returns a
+// real HTTP 400 ("The plain HTTP request was sent to HTTPS port"), which looks
+// like a working HTTP service. A handshake either succeeds or fails.
 func (h *HTTPX) probeOne(ctx context.Context, host string, port int) *report.HTTP {
 	for _, scheme := range []string{"https", "http"} {
 		if ctx.Err() != nil {
@@ -236,10 +232,9 @@ func (h *HTTPX) probeOne(ctx context.Context, host string, port int) *report.HTT
 		if svc != nil {
 			return svc
 		}
-		// Nothing accepted the connection. The plain-HTTP attempt dials the
-		// same endpoint and would be refused identically, so it is skipped —
-		// on a wide sweep that is the difference between one wasted probe
-		// budget and two for every port that closed since the scan saw it.
+		// Nothing accepted the connection; plain HTTP dials the same endpoint
+		// and would be refused identically, so skip it (halves the wasted
+		// budget on a wide sweep for ports closed since the scan).
 		if dialFailed(err) {
 			return nil
 		}
@@ -248,19 +243,15 @@ func (h *HTTPX) probeOne(ctx context.Context, host string, port int) *report.HTT
 }
 
 // dialFailed reports whether the connection failed in a way that says
-// something about the endpoint rather than about the scheme: refused,
-// unreachable, no such host. Retrying those over plain HTTP dials the same
-// endpoint and fails the same way.
+// something about the endpoint rather than the scheme: refused, unreachable,
+// no such host. Retrying over plain HTTP would fail the same way.
 //
-// A timeout is deliberately not one of them. Waiting is exactly how a
-// plain-HTTP server answers a TLS ClientHello, and that is the case the
-// second attempt exists for.
+// A timeout is deliberately not one: waiting is how a plain-HTTP server
+// answers a TLS ClientHello, the case the second attempt exists for.
 //
-// The client replaces the transport error with its own type, so the
-// underlying *net.OpError is gone by the time it arrives here — only the
-// classification survives, which is why this asks the library rather than
-// unwrapping. The *net.OpError branch still catches an error that reached
-// this function without passing through the client.
+// The client replaces the transport error with its own type, losing the
+// *net.OpError, so this asks the library rather than unwrapping. The
+// *net.OpError branch still catches errors that bypassed the client.
 func dialFailed(err error) bool {
 	if err == nil {
 		return false
@@ -278,17 +269,15 @@ func dialFailed(err error) bool {
 
 func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*report.HTTP, error) {
 	// Connect to the explicit port, always; only the recorded URL is
-	// canonical. Rendering https://host:443 as https://host is not cosmetic:
-	// it makes a scheme on a non-default port — TLS answering on 80, say —
-	// the only kind that keeps its port, so the unusual case stands out
-	// instead of being lost among redundant ones.
+	// canonical. Dropping the default port is not cosmetic: it leaves a
+	// scheme on a non-default port (TLS answering on 80, say) as the only
+	// kind that keeps its port, so the unusual case stands out.
 	target := scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port))
 	canonical := canonicalURL(scheme, host, port)
 
-	// The first hop is always requested on its own. It is the endpoint that
-	// was probed, so its certificate is the one recorded; and a port that does
-	// not answer costs one attempt, rather than a followed request and then a
-	// fallback that waits out the same timeout a second time.
+	// The first hop is requested on its own: it is the probed endpoint, so its
+	// certificate is the one recorded, and an unresponsive port costs one
+	// attempt rather than a followed request plus a fallback timeout.
 	first, err := h.do(ctx, h.direct, target)
 	if err != nil {
 		h.opts.Logger.Debug("probe failed", "target", target, "error", err)
@@ -299,9 +288,8 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*re
 		if followed, followErr := h.do(ctx, h.client, target); followErr == nil {
 			resp = followed
 		} else {
-			// The chain broke on a later hop — a redirect to a host whose TLS
-			// handshake fails, say. The first hop still answered, and a 301
-			// from an open port is a finding worth keeping.
+			// The chain broke on a later hop (a redirect to a host whose TLS
+			// fails, say) but the first hop answered; that 301 is worth keeping.
 			unfollowed = true
 			h.opts.Logger.Debug("redirect not followed", "target", target, "error", followErr)
 		}
@@ -319,10 +307,9 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*re
 		Tech:               h.fingerprint(resp),
 		Redirects:          chain(resp),
 	}
-	// The certificate is the probed endpoint's: taken from the first hop, and
-	// only when that connection was itself TLS. A followed response carries
-	// the certificate of wherever the chain ended, which would put another
-	// host's names and issuer on this port.
+	// The certificate is the probed endpoint's: from the first hop, and only
+	// when that connection was TLS. A followed response carries the certificate
+	// of wherever the chain ended, putting another host's names on this port.
 	if scheme == "https" {
 		svc.TLS = certificate(first)
 		if h.opts.SPKI && svc.TLS != nil {
@@ -441,9 +428,8 @@ func truncate(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
-	// Cutting at a byte offset can land inside a multi-byte rune, and the
-	// JSON encoder then rewrites the broken tail to U+FFFD. Non-ASCII titles
-	// are routine on real targets.
+	// Cutting at a byte offset can split a multi-byte rune, which the JSON
+	// encoder rewrites to U+FFFD; non-ASCII titles are routine.
 	for limit > 0 && !utf8.ValidString(s[:limit]) {
 		limit--
 	}

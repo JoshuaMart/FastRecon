@@ -26,8 +26,7 @@ type WebhookOptions struct {
 
 // Webhook POSTs the report to an HTTP endpoint.
 //
-// The payload is the report document exactly as the other sinks emit it: one
-// shape for every consumer, no per-destination formatting.
+// The payload is the report exactly as the other sinks emit it.
 type Webhook struct {
 	url     string
 	method  string

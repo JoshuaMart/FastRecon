@@ -75,10 +75,8 @@ func newTestServer(t *testing.T, runner *fakeRunner) *Server {
 	return s
 }
 
-// baseConfig is the real default configuration, built the way the binary
-// builds it. Hand-writing a valid Config here would drift the moment an
-// option is added, and the test would then be validating a shape nothing
-// else uses.
+// baseConfig is the real default configuration, built as the binary builds it;
+// a hand-written Config would drift as options are added.
 func baseConfig(t *testing.T) *config.Config {
 	t.Helper()
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
@@ -250,8 +248,7 @@ func TestOversizedBodyIsRejected(t *testing.T) {
 	}
 }
 
-// Refused rather than queued: a queued request spends its own deadline
-// waiting and then reports a timeout that explains nothing.
+// Refused rather than queued, so a request does not spend its deadline waiting.
 func TestSecondConcurrentRunIsRefused(t *testing.T) {
 	runner := &fakeRunner{block: make(chan struct{})}
 	s := newTestServer(t, runner)
@@ -283,8 +280,8 @@ func TestSecondConcurrentRunIsRefused(t *testing.T) {
 	close(runner.block)
 }
 
-// The same split the exit codes make: a transient failure is ours, a
-// configuration the stages reject is the caller's.
+// Same split as the exit codes: transient failure is ours, rejected
+// configuration is the caller's.
 func TestRunFailureStatusFollowsTheCause(t *testing.T) {
 	transient := &fakeRunner{err: fmt.Errorf("%w: every resolver failed the health check", app.ErrRuntime)}
 	if got := post(t, newTestServer(t, transient), "secret", `{"domain":"example.com"}`).Code; got != http.StatusInternalServerError {

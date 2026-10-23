@@ -67,9 +67,7 @@ func (c *Config) validate(requireDomain bool) error {
 		fail("ports must not be empty")
 	}
 
-	// Source names are matched case-sensitively by the engine, so they are
-	// normalized here, once, rather than at each of the several places that
-	// look them up.
+	// The engine matches source names case-sensitively; normalize once here.
 	c.Sources = lowerAll(c.Sources)
 	c.ExcludeSources = lowerAll(c.ExcludeSources)
 	if !c.AllSources && len(c.Sources) == 0 {
@@ -169,9 +167,8 @@ func (c *Config) validate(requireDomain bool) error {
 		fail("unknown log-format %q (valid: json, text)", c.LogFormat)
 	}
 
-	// Every sink renders the same bytes, so the format has to hold up whatever
-	// the destination is. The load path parses it before reaching here; this
-	// is what catches a Config assembled in code.
+	// The load path already parsed the format; this catches a Config
+	// assembled in code.
 	if _, err := report.ParseFormat(string(c.Format)); err != nil {
 		errs = append(errs, err)
 	}

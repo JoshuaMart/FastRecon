@@ -15,12 +15,11 @@ const (
 
 // DetectEnvironment labels the runtime for the report.
 //
-// Only local and container are detectable from inside the process. A
-// serverless job and a plain container look the same to the runtime, so the
-// job and function labels come from the deployment setting --environment
-// (FASTRECON_ENVIRONMENT); the deploy manifests in deploy/ do that. Guessing
-// from undocumented platform variables would silently mislabel runs the day
-// the platform renames one.
+// Only local and container are detectable from inside the process: a
+// serverless job looks like a plain container, so the job and function labels
+// come from the deployment setting --environment (FASTRECON_ENVIRONMENT), as
+// the manifests in deploy/ do. Guessing from undocumented platform variables
+// would mislabel runs the day the platform renames one.
 func DetectEnvironment(explicit string, serveMode bool) string {
 	if e := strings.TrimSpace(explicit); e != "" {
 		return e

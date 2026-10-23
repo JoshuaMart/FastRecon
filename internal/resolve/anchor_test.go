@@ -135,7 +135,7 @@ func TestCheckResolverVerdicts(t *testing.T) {
 }
 
 // A resolver that does not answer at all must cost one query, not one per
-// anchor: on a list of thousands, the difference is the whole health budget.
+// anchor: on a list of thousands that is the whole health budget.
 func TestUnreachableResolverIsNotAskedEveryAnchor(t *testing.T) {
 	// A port nothing listens on: every query times out.
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
