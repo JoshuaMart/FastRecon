@@ -219,9 +219,18 @@ enumeration.
 
 ### Scheme detection
 
-**HTTPS first on every port**, plain HTTP as the fallback, no port-number heuristic. A plain
-request to a TLS port often gets a genuine `400 The plain HTTP request was sent to HTTPS
-port`, which looks like a working HTTP service; a handshake either succeeds or fails.
+**HTTPS first on every port but 80**, plain HTTP as the fallback. A plain request to a TLS
+port often gets a genuine `400 The plain HTTP request was sent to HTTPS port`, which looks
+like a working HTTP service; a handshake either succeeds or fails.
+
+| Port | Order | Why |
+|---|---|---|
+| 80 | plain, then TLS | a client speaks plain HTTP there: a front that sniffs TLS from the first byte answers both, and is reported as what a browser sees (its redirect), not as TLS on port 80 |
+| any other | TLS, then plain | the handshake is the only reliable discriminator |
+
+On port 80 the plain answer is refused when it is the TLS-required `400` (nginx, Apache, Go's
+`net/http` wording), and the port is tried over TLS: plain first must not fall into the trap
+TLS first avoids.
 
 The first hop is always requested on its own, and redirects are followed in a second request
 only when it answered with one. So:

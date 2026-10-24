@@ -309,7 +309,7 @@ func TestRefusedConnectionIsRecognisedThroughTheClient(t *testing.T) {
 	srv.Close()
 
 	h := newRealProber(t, false)
-	svc, err := h.request(context.Background(), "https", host, port)
+	svc, err := h.request(context.Background(), "https", host, port, false)
 	if svc != nil {
 		t.Fatalf("service = %+v, want nothing on a closed port", svc)
 	}
@@ -351,7 +351,7 @@ func TestTimeoutDoesNotSkipTheSecondScheme(t *testing.T) {
 		t.Skip("cannot build a prober here:", err)
 	}
 
-	_, reqErr := h.request(context.Background(), "https", addr.IP.String(), addr.Port)
+	_, reqErr := h.request(context.Background(), "https", addr.IP.String(), addr.Port, false)
 	if reqErr == nil {
 		t.Fatal("want an error from a socket that never answers")
 	}

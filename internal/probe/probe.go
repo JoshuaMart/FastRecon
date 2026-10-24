@@ -217,18 +217,57 @@ func attach(hosts []report.Host, targets []target, results []*report.HTTP) []rep
 	return out
 }
 
-// probeOne tries a port over HTTPS, then over plain HTTP.
+// plainFirst are the ports a client speaks plain HTTP to. A front that
+// accepts both on one of them (TLS sniffed from the first byte) is reported as
+// what a browser sees there, not as TLS on port 80.
+var plainFirst = map[int]bool{80: true}
+
+// schemes is the order a port is tried in.
+func schemes(port int) []string {
+	if plainFirst[port] {
+		return []string{"http", "https"}
+	}
+	return []string{"https", "http"}
+}
+
+// errTLSRequired is a plain answer saying the port speaks TLS.
+var errTLSRequired = errors.New("plain request answered with a TLS-required error")
+
+// tlsRequired recognizes the 400 a TLS server sends to a plain request: nginx,
+// Apache, Go's net/http. The text is looked for in the raw response too: an
+// HTTP/1.0 answer without a length leaves the parsed body empty.
+func tlsRequired(status int, response string) bool {
+	if status != http.StatusBadRequest {
+		return false
+	}
+	b := strings.ToLower(response)
+	for _, sig := range []string{
+		"plain http request was sent to https port",
+		"client sent an http request to an https server",
+		"combination of host and port requires tls",
+	} {
+		if strings.Contains(b, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// probeOne tries a port over HTTPS, then over plain HTTP, except on the ports
+// a client speaks plain HTTP to, where the order is reversed.
 //
-// HTTPS is tried first on every port because the TLS handshake is the only
-// reliable discriminator: a plain request to an HTTPS port commonly returns a
-// real HTTP 400 ("The plain HTTP request was sent to HTTPS port"), which looks
-// like a working HTTP service. A handshake either succeeds or fails.
+// HTTPS comes first elsewhere because the TLS handshake is the only reliable
+// discriminator: a plain request to an HTTPS port commonly returns a real HTTP
+// 400 ("The plain HTTP request was sent to HTTPS port"), which looks like a
+// working HTTP service. Where plain goes first, that 400 is recognized and the
+// port is tried over TLS instead.
 func (h *HTTPX) probeOne(ctx context.Context, host string, port int) *report.HTTP {
-	for _, scheme := range []string{"https", "http"} {
+	order := schemes(port)
+	for i, scheme := range order {
 		if ctx.Err() != nil {
 			return nil
 		}
-		svc, err := h.request(ctx, scheme, host, port)
+		svc, err := h.request(ctx, scheme, host, port, i == 0 && scheme == "http")
 		if svc != nil {
 			return svc
 		}
@@ -267,7 +306,9 @@ func dialFailed(err error) bool {
 	return errors.As(err, &opErr) && opErr.Op == "dial"
 }
 
-func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*report.HTTP, error) {
+// request probes one scheme. With refuseTLSRequired, a plain answer saying the
+// port speaks TLS is not a service: the caller tries TLS next.
+func (h *HTTPX) request(ctx context.Context, scheme, host string, port int, refuseTLSRequired bool) (*report.HTTP, error) {
 	// Connect to the explicit port, always; only the recorded URL is
 	// canonical. Dropping the default port is not cosmetic: it leaves a
 	// scheme on a non-default port (TLS answering on 80, say) as the only
@@ -282,6 +323,10 @@ func (h *HTTPX) request(ctx context.Context, scheme, host string, port int) (*re
 	if err != nil {
 		h.opts.Logger.Debug("probe failed", "target", target, "error", err)
 		return nil, err
+	}
+	if refuseTLSRequired && tlsRequired(first.StatusCode, first.Raw+string(first.Data)) {
+		h.opts.Logger.Debug("plain answer asks for TLS", "target", target)
+		return nil, errTLSRequired
 	}
 	resp, unfollowed := first, false
 	if h.opts.FollowRedirects && isRedirect(first.StatusCode) {
