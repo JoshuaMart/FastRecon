@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/projectdiscovery/cdncheck"
+
 	"github.com/JoshuaMart/FastRecon/internal/ratelimit"
 	"github.com/JoshuaMart/FastRecon/internal/report"
 )
@@ -608,5 +610,60 @@ func TestScanIsAbsentWhenNothingWasProbed(t *testing.T) {
 	}
 	if res.Hosts[0].Scan != nil {
 		t.Errorf("scan = %+v, want it absent on a host that was never probed", res.Hosts[0].Scan)
+	}
+}
+
+// A host reached through a CDN's name is on its edge, even when no address
+// range says so: the edge accepts any port, and a full sweep finds ports with
+// nothing behind them.
+func TestACDNNameLimitsTheScanOfItsAddresses(t *testing.T) {
+	specs := map[string]string{}
+	n := newScanner(t, true, func(_ context.Context, addresses []string, ports portSpec, _ *ratelimit.Limiter) (scanResult, error) {
+		for _, a := range addresses {
+			specs[a] = ports.String()
+		}
+		return scanResult{}, nil
+	})
+	n.cdn = cdncheck.New()
+
+	hosts := []report.Host{
+		// Wangsu, a domain cdncheck lacks.
+		{Host: "secure.example.cn", Status: report.StatusLive, Addresses: []string{"198.51.100.7"}, CNAME: []string{"secure.example.cn.wscncdn.com."}},
+		// A domain cdncheck knows by name only.
+		{Host: "static.example.com", Status: report.StatusLive, Addresses: []string{"198.51.100.8"}, CNAME: []string{"d111abcdef8.cloudfront.net"}},
+		{Host: "origin.example.com", Status: report.StatusLive, Addresses: []string{"198.51.100.9"}},
+		// Dead: its addresses are not an edge anyone scans.
+		{Host: "gone.example.com", Status: report.StatusDead, Addresses: []string{"198.51.100.10"}, CNAME: []string{"x.wscncdn.com"}},
+	}
+	res, err := n.Scan(context.Background(), hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited := portSpec{List: joinPorts(cdnPorts)}.String()
+	for addr, want := range map[string]string{"198.51.100.7": limited, "198.51.100.8": limited, "198.51.100.9": "top-100"} {
+		if got := specs[addr]; got != want {
+			t.Errorf("%s scanned with %q, want %q", addr, got, want)
+		}
+	}
+	if _, scanned := specs["198.51.100.10"]; scanned {
+		t.Error("a dead host was scanned")
+	}
+	for i, want := range []string{"网宿 CDN", "amazon"} {
+		cdn := res.Hosts[i].CDN
+		if len(cdn) != 1 || cdn[0].Name != want || !cdn[0].ScanLimited {
+			t.Errorf("%s cdn = %+v, want %s, scan limited", res.Hosts[i].Host, cdn, want)
+		}
+	}
+	if res.Hosts[2].CDN != nil {
+		t.Errorf("an origin was given a provider: %+v", res.Hosts[2].CDN)
+	}
+}
+
+// An address its range already matched keeps that provider.
+func TestARangeMatchWinsOverAName(t *testing.T) {
+	edges := map[string]edge{"104.16.0.1": {Provider: "cloudflare", Type: "waf"}}
+	classifyNames(nil, []report.Host{{Host: "a.example.com", Status: report.StatusLive, Addresses: []string{"104.16.0.1"}, CNAME: []string{"a.wscncdn.com"}}}, edges)
+	if edges["104.16.0.1"].Provider != "cloudflare" {
+		t.Errorf("edge = %+v, want the range's provider kept", edges["104.16.0.1"])
 	}
 }

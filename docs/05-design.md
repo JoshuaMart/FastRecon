@@ -197,8 +197,15 @@ only shows when the image runs.
 ### CDN and WAF determination
 
 Before the scan, every address is checked against known CDN, WAF and cloud ranges
-(`cdncheck`). This is a **determination, not a filter**: the provider is always recorded,
-and only `--skip-cdn` (default on) restricts those addresses to ports 80 and 443.
+(`cdncheck`), and every live host's CNAME chain against the CDN and WAF domains `cdncheck`
+knows, plus a short list of its gaps (`wscncdn.com`). An address a host reaches through
+such a name is the provider's edge. This is a **determination, not a filter**: the
+provider is always recorded, and only `--skip-cdn` (default on) restricts those addresses
+to ports 80 and 443.
+
+- **Why the name too**: many providers, most of the Asian ones, are in `cdncheck` by their
+  domains only, with no address range. Their edges accept a connection on any port, so a
+  full sweep finds ports with nothing behind them.
 
 - **Why restrict**: an edge answers for thousands of customers. Its ports describe the
   provider, not the target, and a full sweep looks like an attack on the edge.

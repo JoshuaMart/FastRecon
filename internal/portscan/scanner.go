@@ -115,6 +115,7 @@ func (s *Scanner) Scan(ctx context.Context, hosts []report.Host) (pipeline.PortS
 
 	addresses := sortedKeys(byAddress)
 	edges := classify(s.cdn, addresses)
+	classifyNames(s.cdn, hosts, edges)
 	plain, behindEdge := splitByEdge(addresses, edges, s.opts.SkipCDN)
 
 	s.opts.Logger.Debug("port scan planned",

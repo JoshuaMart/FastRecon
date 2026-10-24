@@ -3,8 +3,10 @@ package portscan
 import (
 	"net"
 	"sort"
+	"strings"
 
 	"github.com/projectdiscovery/cdncheck"
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/JoshuaMart/FastRecon/internal/report"
 )
@@ -33,6 +35,56 @@ func classify(client *cdncheck.Client, addresses []string) map[string]edge {
 		out[addr] = edge{Provider: provider, Type: kind}
 	}
 	return out
+}
+
+// extraDomains are CDN domains cdncheck's dataset lacks, by registrable
+// domain, named as cdncheck names the provider.
+var extraDomains = map[string]edge{
+	"wscncdn.com": {Provider: "网宿 CDN", Type: "cdn"},
+}
+
+// classifyNames marks the addresses of live hosts whose CNAME chain ends at a
+// known CDN or WAF domain: an address reached through such a name is the
+// provider's edge. Many providers are in cdncheck by their domains only, with
+// no address range. An address the ranges already matched keeps that match.
+func classifyNames(client *cdncheck.Client, hosts []report.Host, edges map[string]edge) {
+	for _, h := range hosts {
+		if h.Status != report.StatusLive || len(h.CNAME) == 0 {
+			continue
+		}
+		e, ok := nameEdge(client, h.CNAME)
+		if !ok {
+			continue
+		}
+		for _, addr := range h.Addresses {
+			if net.ParseIP(addr) == nil {
+				continue
+			}
+			if _, known := edges[addr]; !known {
+				edges[addr] = e
+			}
+		}
+	}
+}
+
+// nameEdge finds the provider of the first name of a chain that is a known
+// CDN or WAF domain. A name that does not parse is skipped, not fatal.
+func nameEdge(client *cdncheck.Client, names []string) (edge, bool) {
+	for _, n := range names {
+		n = strings.TrimSuffix(strings.ToLower(n), ".")
+		if d, err := publicsuffix.EffectiveTLDPlusOne(n); err == nil {
+			if e, ok := extraDomains[d]; ok {
+				return e, true
+			}
+		}
+		if client == nil {
+			continue
+		}
+		if matched, provider, kind, err := client.CheckSuffix(n); err == nil && matched {
+			return edge{Provider: provider, Type: kind}, true
+		}
+	}
+	return edge{}, false
 }
 
 // cdnEntries builds report entries per provider (hosts can have both CDN + origin addresses).
